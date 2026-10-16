@@ -15,6 +15,7 @@ const actions = new Map();
 let held = 0;
 let interactPressed = false;
 let shotAim = null; // angle of a click not yet sent, in radians
+let pickupId = null; // pickup right-clicked but not yet sent
 
 // Registers a one-shot handler for a key press (ignores auto-repeat).
 export function onKey(code, handler) {
@@ -26,11 +27,17 @@ export function queueShot(aim) {
   shotAim = aim;
 }
 
-// Input for the next movement step: { keys, aim }. Interact and shots are
-// reported once per press or click.
+// Takes pickup `id` on the next movement step.
+export function queuePickup(id) {
+  pickupId = id;
+}
+
+// Input for the next movement step: { keys, aim, pickup }. Interact, shots and
+// pickups are reported once per press or click.
 export function sampleInput() {
   let keys = held;
   let aim;
+  let pickup;
   if (interactPressed) {
     keys |= KEY.INTERACT;
     interactPressed = false;
@@ -40,7 +47,12 @@ export function sampleInput() {
     aim = shotAim;
     shotAim = null;
   }
-  return { keys, aim };
+  if (pickupId !== null) {
+    keys |= KEY.PICKUP;
+    pickup = pickupId;
+    pickupId = null;
+  }
+  return { keys, aim, pickup };
 }
 
 window.addEventListener('keydown', (event) => {

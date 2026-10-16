@@ -1,15 +1,15 @@
 import { SIM_STEP } from '/shared/constants.js';
 import { playSound } from './audio.js';
 import { ClientGame } from './game.js';
-import { onKey, queueShot, sampleInput } from './input.js';
+import { onKey, queuePickup, queueShot, sampleInput } from './input.js';
 import { connect, on, send } from './net.js';
 import { createRenderer } from './render.js';
 import { createUi } from './ui.js';
 
 const MAX_FRAME_TIME = 0.25; // seconds; avoids a burst of steps after the tab was hidden
 const RECONNECT_DELAY = 1000;
-// Other players' gunshots are at full volume within this many tiles, then fall
-// off with distance, down to a floor so they're always audible.
+// Sounds from elsewhere on the map are at full volume within this many tiles,
+// then fall off with distance, down to a floor so they're always audible.
 const SOUND_FULL_DISTANCE = 6;
 const SOUND_MIN_VOLUME = 0.2;
 
@@ -42,7 +42,9 @@ on('lobby', ({ lobby: next }) => {
 });
 
 on('game', (msg) => {
-  game = new ClientGame(msg, { onFire: playGunshot });
+  // Timed to when each bullet appears on screen.
+  const onFire = ({ x, y, t0 }) => playSoundAt('gunshot', x, y, (t0 - performance.now()) / 1000);
+  game = new ClientGame(msg, { onFire });
   renderer.setMap(game.map);
   menuOpen = false;
   updateScreen();
@@ -53,7 +55,11 @@ on('state', (msg) => {
   game.applyState(msg);
   ui.renderHealth(game.hp, game.down);
 });
-on('door', (msg) => game?.applyDoor(msg));
+on('door', (msg) => {
+  if (!game) return;
+  const door = game.applyDoor(msg);
+  playSoundAt(msg.open ? 'doorOpen' : 'doorClose', door.x + door.w / 2, door.y + door.h / 2);
+});
 on('shot', (msg) => game?.applyShot(msg));
 on('bulletEnd', (msg) => game?.applyBulletEnd(msg));
 on('error', ({ message }) => ui.showError(message));
@@ -83,17 +89,30 @@ onKey('Escape', () => {
 });
 
 // Left click: shoot from our (predicted) position toward the clicked point.
+// Right click on a pickup within reach: take it.
 canvas.addEventListener('mousedown', (event) => {
-  if (event.button !== 0 || !game || menuOpen) return;
+  if (!game || menuOpen) return;
   const target = renderer.screenToWorld(event.clientX, event.clientY);
-  if (target) queueShot(Math.atan2(target.y - game.self.y, target.x - game.self.x));
+  if (!target) return;
+  if (event.button === 0) {
+    queueShot(Math.atan2(target.y - game.self.y, target.x - game.self.x));
+  } else if (event.button === 2) {
+    const item = game.pickupAt(target.x, target.y);
+    if (item && game.inReach(item) && game.canTake(item)) {
+      queuePickup(item.id);
+      playSound('pickupAmmo'); // the server makes the same checks, so this will succeed
+    }
+  }
 });
 
-// Timed to when the bullet appears, and quieter the farther away it was fired.
-function playGunshot({ x, y, t0 }) {
+// Right click is for picking things up, not the browser's menu.
+canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+// Plays a sound from a spot on the map, quieter the farther it is from us.
+function playSoundAt(name, x, y, delay = 0) {
   const dist = Math.hypot(x - game.self.x, y - game.self.y);
   const volume = Math.min(1, Math.max(SOUND_MIN_VOLUME, SOUND_FULL_DISTANCE / dist));
-  playSound('gunshot', { volume, delay: (t0 - performance.now()) / 1000 });
+  playSound(name, { volume, delay });
 }
 
 function setMenu(open) {
@@ -132,8 +151,8 @@ function frame(now) {
   acc += Math.min((now - last) / 1000, MAX_FRAME_TIME);
   last = now;
   while (acc >= SIM_STEP) {
-    const { keys, aim } = sampleInput();
-    game?.step(menuOpen ? 0 : keys, aim);
+    const { keys, aim, pickup } = sampleInput();
+    game?.step(menuOpen ? 0 : keys, aim, pickup);
     acc -= SIM_STEP;
   }
 

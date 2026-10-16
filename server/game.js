@@ -1,5 +1,6 @@
 import {
-  BULLET_RANGE, BULLET_SPEED, KEY, KEY_MASK, PLAYER_AMMO, PLAYER_MAX_HP, SIM_STEP, TICK_RATE,
+  AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, KEY, KEY_MASK, PICKUP_RANGE, PLAYER_MAX_AMMO, PLAYER_MAX_HP,
+  SIM_STEP, TICK_RATE,
 } from '../shared/constants.js';
 import { castRay, nearestDoor, roomCenter, serializeMap } from '../shared/map.js';
 import { bodyOverlapsRect, stepPlayer } from '../shared/physics.js';
@@ -25,6 +26,9 @@ const ENEMY_DAMAGE = 1; // HP per second, per enemy touching a player
 // Bullets fly in straight lines and stop at the first wall, closed door or
 // enemy. Clients are told when one is fired ('shot') and where it stopped
 // ('bulletEnd'), and animate the flight themselves.
+//
+// Pickups ({ id, kind, x, y }) are items on the floor. For now there's one
+// ammo stack in the spawn room, and it stays there however often it's used.
 export class Game {
   constructor(seed, playerIds) {
     this.seed = seed;
@@ -42,10 +46,13 @@ export class Game {
         ...spawns[i],
         hp: PLAYER_MAX_HP,
         down: false,
-        ammo: PLAYER_AMMO,
+        ammo: PLAYER_MAX_AMMO,
         ...freshInputState(),
       });
     });
+
+    const ammo = ammoSpot(this.map, createRng(seed ^ 0x2545f491));
+    this.pickups = [{ id: 1, kind: 'ammo', ...ammo }];
 
     this.lastTick = performance.now();
     this.timer = setInterval(() => this.tick(), 1000 / TICK_RATE);
@@ -77,6 +84,7 @@ export class Game {
       map: serializeMap(this.map),
       players: this.playerStates(),
       enemies: this.enemies.positions(),
+      pickups: this.pickups,
     });
   }
 
@@ -89,12 +97,17 @@ export class Game {
     this.players.delete(id);
   }
 
-  queueInput(id, { seq, keys, aim }) {
+  queueInput(id, { seq, keys, aim, pickup }) {
     const player = this.players.get(id);
     if (!player || !Number.isInteger(seq) || !Number.isInteger(keys)) return;
     if (seq <= player.queuedSeq || player.inputs.length >= MAX_QUEUED_INPUTS) return;
     player.queuedSeq = seq;
-    player.inputs.push({ seq, keys: keys & KEY_MASK, aim: Number.isFinite(aim) ? aim : null });
+    player.inputs.push({
+      seq,
+      keys: keys & KEY_MASK,
+      aim: Number.isFinite(aim) ? aim : null,
+      pickup: Number.isInteger(pickup) ? pickup : null,
+    });
   }
 
   tick() {
@@ -105,13 +118,14 @@ export class Game {
     for (const player of this.players.values()) {
       player.budget = Math.min(player.budget + elapsed, MAX_INPUT_BUDGET);
       while (player.inputs.length && player.budget >= SIM_STEP - 1e-9) {
-        const { seq, keys, aim } = player.inputs.shift();
+        const { seq, keys, aim, pickup } = player.inputs.shift();
         player.budget -= SIM_STEP;
         // Downed players' inputs are still acknowledged, just not applied.
         if (!player.down) {
           stepPlayer(player, keys, this.map);
           if (keys & KEY.INTERACT) this.interact(player);
           if (keys & KEY.SHOOT && aim !== null) this.fire(player, seq, aim);
+          if (keys & KEY.PICKUP && pickup !== null) this.pickUp(player, pickup);
         }
         player.lastSeq = seq;
       }
@@ -175,6 +189,16 @@ export class Game {
     });
   }
 
+  // Takes pickup `id` if the player is close enough and can use it. An ammo
+  // stack tops the player up and stays where it is.
+  pickUp(player, id) {
+    const item = this.pickups.find((p) => p.id === id);
+    if (!item || Math.hypot(item.x - player.x, item.y - player.y) > PICKUP_RANGE) return;
+    if (item.kind === 'ammo' && player.ammo < PLAYER_MAX_AMMO) {
+      player.ammo = Math.min(PLAYER_MAX_AMMO, player.ammo + AMMO_PICKUP);
+    }
+  }
+
   interact(player) {
     const door = nearestDoor(this.map, player.x, player.y);
     if (!door) return;
@@ -220,4 +244,23 @@ function spawnPoints(map, count) {
   const dist = (p) => Math.hypot(p.x - center.x, p.y - center.y);
   points.sort((a, b) => dist(a) - dist(b));
   return points.slice(0, count);
+}
+
+// Players spawn on the tiles nearest the room's middle (all within this
+// distance even for a full lobby), so the ammo stack is placed farther out.
+const SPAWN_CLUSTER_RADIUS = 2.5;
+
+// A random tile center in the spawn room, clear of the spawn cluster and not
+// against a wall.
+function ammoSpot(map, rng) {
+  const room = map.rooms[map.spawnRoom];
+  const center = roomCenter(room);
+  const spots = [];
+  for (let y = room.y + 1; y < room.y + room.h - 1; y++) {
+    for (let x = room.x + 1; x < room.x + room.w - 1; x++) {
+      const spot = { x: x + 0.5, y: y + 0.5 };
+      if (Math.hypot(spot.x - center.x, spot.y - center.y) >= SPAWN_CLUSTER_RADIUS) spots.push(spot);
+    }
+  }
+  return rng.pick(spots);
 }

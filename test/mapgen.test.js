@@ -85,3 +85,34 @@ test('doors are straight runs set in a wall, with floor on both sides', () => {
     assert.equal(doorTiles, map.tiles.filter((t) => t === TILE.DOOR).length);
   }
 });
+
+test('players spawn in a large room in the middle of the map', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    const spawn = map.rooms[map.spawnRoom];
+    assert.ok(spawn.w >= 16 && spawn.h >= 12, `seed ${seed}: spawn room is ${spawn.w}x${spawn.h}`);
+    for (const room of map.rooms) {
+      assert.ok(room.w * room.h <= spawn.w * spawn.h, `seed ${seed}: room ${room.id} is bigger than the spawn room`);
+    }
+    const center = roomCenter(spawn);
+    assert.ok(Math.abs(center.x - map.width / 2) <= map.width * 0.1, `seed ${seed}: spawn room off-center`);
+    assert.ok(Math.abs(center.y - map.height / 2) <= map.height * 0.1, `seed ${seed}: spawn room off-center`);
+  }
+});
+
+test('the spawn room has doors on at least two different walls', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    const r = map.rooms[map.spawnRoom];
+    const walls = new Set();
+    for (const d of map.doors) {
+      const alongX = d.h === 1 && d.x >= r.x && d.x < r.x + r.w;
+      const alongY = d.w === 1 && d.y >= r.y && d.y < r.y + r.h;
+      if (alongX && d.y === r.y - 1) walls.add('top');
+      if (alongX && d.y === r.y + r.h) walls.add('bottom');
+      if (alongY && d.x === r.x - 1) walls.add('left');
+      if (alongY && d.x === r.x + r.w) walls.add('right');
+    }
+    assert.ok(walls.size >= 2, `seed ${seed}: exits only on ${[...walls]}`);
+  }
+});

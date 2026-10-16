@@ -1,4 +1,4 @@
-import { ENEMY_MAX_HP, ENEMY_RADIUS, PLAYER_MAX_HP, PLAYER_SIZE, TILE } from '/shared/constants.js';
+import { ENEMY_MAX_HP, ENEMY_RADIUS, PICKUP_SIZE, PLAYER_MAX_HP, PLAYER_SIZE, TILE } from '/shared/constants.js';
 import { nearestDoor } from '/shared/map.js';
 
 const TILE_PX = 32; // CSS pixels per tile in the main view
@@ -40,6 +40,17 @@ const COLORS = {
   miniWall: '#5c6878',
 };
 const AWAY_ALPHA = 0.35; // disconnected players are drawn faded
+
+// Pickup sprites by kind. Drawn once loaded; until then, nothing.
+const SPRITES = {
+  ammo: loadImage('/assets/bullet-stack.png'),
+};
+
+function loadImage(src) {
+  const image = new Image();
+  image.src = src;
+  return image;
+}
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -113,6 +124,7 @@ export function createRenderer(canvas) {
       drawMap(ctx, layers);
       const target = game.down ? null : nearestDoor(map, game.self.x, game.self.y);
       drawDoors(ctx, map.doors, target);
+      for (const item of game.pickups) drawPickup(ctx, item);
       // Enemies under players (so a downed player stays visible), downed players
       // under standing ones, and ours last among those so it's on top.
       for (const enemy of enemies) drawEnemy(ctx, enemy);
@@ -133,10 +145,17 @@ export function createRenderer(canvas) {
       }
       if (target) {
         const pos = toScreen(target.x + target.w / 2, target.y);
-        drawPrompt(ctx, pos.x, pos.y - 10, target.open ? 'Close' : 'Open');
+        drawPrompt(ctx, pos.x, pos.y - 10, 'E', target.open ? 'Close' : 'Open');
+      }
+      // Below the item, since name tags sit above the players standing next to it.
+      const item = game.nearbyPickup();
+      if (item) {
+        const pos = toScreen(item.x, item.y + PICKUP_SIZE / 2);
+        if (game.canTake(item)) drawPrompt(ctx, pos.x, pos.y + 4, 'Right-click', 'Take ammo', { below: true });
+        else drawPrompt(ctx, pos.x, pos.y + 4, null, 'Ammo full', { below: true });
       }
       drawHurt(ctx, viewW, viewH, 1 - (now - game.hurtAt) / HURT_FLASH_MS);
-      drawMinimap(ctx, layers.minimap, map, players, enemies, cam, viewW, viewH);
+      drawMinimap(ctx, layers.minimap, map, players, enemies, game.pickups, cam, viewW, viewH);
     },
   };
 }
@@ -281,6 +300,13 @@ function drawEnemy(ctx, { x, y }) {
   ctx.stroke();
 }
 
+function drawPickup(ctx, { kind, x, y }) {
+  const image = SPRITES[kind];
+  if (!image?.complete || !image.naturalWidth) return;
+  const half = PICKUP_SIZE / 2;
+  ctx.drawImage(image, x - half, y - half, PICKUP_SIZE, PICKUP_SIZE);
+}
+
 // A small yellow point with a short fading trail behind it.
 function drawBullet(ctx, { x, y, dx, dy, flown }) {
   const trail = Math.min(flown, BULLET_TRAIL);
@@ -357,38 +383,40 @@ function drawHurt(ctx, viewW, viewH, strength) {
   ctx.fillRect(0, 0, viewW, viewH);
 }
 
-// A "[E] Open" hint centered above (x, y).
-function drawPrompt(ctx, x, y, label) {
+// A "[key] label" hint centered above (x, y), or below it with `below`, e.g.
+// "[E] Open". With no key, just the label.
+function drawPrompt(ctx, x, y, key, label, { below = false } = {}) {
   ctx.font = '600 12px system-ui, sans-serif';
   ctx.textBaseline = 'middle';
-  const key = 'E';
-  const keyW = 18;
-  const gap = 6;
+  const keyW = key ? Math.max(18, ctx.measureText(key).width + 10) : 0;
+  const gap = key ? 6 : 4;
   const labelW = ctx.measureText(label).width;
   const w = keyW + gap + labelW + 12;
   const h = 24;
   const left = Math.round(x - w / 2);
-  const top = Math.round(y - h);
+  const top = Math.round(below ? y : y - h);
 
   ctx.fillStyle = COLORS.panel;
   ctx.beginPath();
   ctx.roundRect(left, top, w, h, 6);
   ctx.fill();
 
-  ctx.fillStyle = COLORS.highlight;
-  ctx.beginPath();
-  ctx.roundRect(left + 4, top + 3, keyW, h - 6, 4);
-  ctx.fill();
+  if (key) {
+    ctx.fillStyle = COLORS.highlight;
+    ctx.beginPath();
+    ctx.roundRect(left + 4, top + 3, keyW, h - 6, 4);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COLORS.void;
+    ctx.fillText(key, left + 4 + keyW / 2, top + h / 2 + 1);
+  }
 
-  ctx.textAlign = 'center';
-  ctx.fillStyle = COLORS.void;
-  ctx.fillText(key, left + 4 + keyW / 2, top + h / 2 + 1);
   ctx.textAlign = 'left';
   ctx.fillStyle = COLORS.highlight;
   ctx.fillText(label, left + 4 + keyW + gap, top + h / 2 + 1);
 }
 
-function drawMinimap(ctx, image, map, players, enemies, cam, viewW, viewH) {
+function drawMinimap(ctx, image, map, players, enemies, pickups, cam, viewW, viewH) {
   const s = MINIMAP_PX;
   const w = map.width * s;
   const h = map.height * s;
@@ -418,6 +446,9 @@ function drawMinimap(ctx, image, map, players, enemies, cam, viewW, viewH) {
   const tilesH = viewH / TILE_PX;
   ctx.strokeRect(left + (cam.x - tilesW / 2) * s, top + (cam.y - tilesH / 2) * s, tilesW * s, tilesH * s);
   ctx.restore();
+
+  ctx.fillStyle = COLORS.bullet;
+  for (const { x, y } of pickups) ctx.fillRect(left + x * s - 2, top + y * s - 2, 4, 4);
 
   ctx.fillStyle = COLORS.enemy;
   for (const { x, y } of enemies) ctx.fillRect(left + x * s - 1.5, top + y * s - 1.5, 3, 3);

@@ -4,6 +4,9 @@
 
 const SOUNDS = {
   gunshot: '/assets/single-pistol-gunshot.wav',
+  doorOpen: '/assets/door-open.wav',
+  doorClose: '/assets/door-close.wav',
+  pickupAmmo: '/assets/pickup-ammo.wav',
 };
 const MASTER_VOLUME = 0.5; // the gunshot peaks at full scale; leave headroom for overlaps
 

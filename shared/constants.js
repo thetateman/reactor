@@ -7,8 +7,12 @@ export const TICK_RATE = 20; // server state broadcasts per second
 export const PLAYER_SIZE = 0.7;
 export const PLAYER_SPEED = 5; // tiles per second
 export const PLAYER_MAX_HP = 10;
-export const PLAYER_AMMO = 20;
+export const PLAYER_MAX_AMMO = 20; // players start full
 export const INTERACT_RANGE = 1; // from player center to the nearest edge of a door
+
+export const PICKUP_RANGE = 1.5; // from player center to pickup center
+export const PICKUP_SIZE = 1; // drawn and clickable size of a pickup
+export const AMMO_PICKUP = 20; // rounds an ammo stack gives, up to PLAYER_MAX_AMMO
 
 export const ENEMY_RADIUS = 0.35;
 export const ENEMY_MAX_HP = 3;
@@ -24,8 +28,9 @@ export const KEY = {
   RIGHT: 8,
   INTERACT: 16,
   SHOOT: 32, // the command also carries `aim`, an angle in radians
+  PICKUP: 64, // the command also carries `pickup`, the id of the item to take
 };
-export const KEY_MASK = 63;
+export const KEY_MASK = 127;
 
 export const TILE = {
   VOID: 0,

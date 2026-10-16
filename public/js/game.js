@@ -1,4 +1,6 @@
-import { BULLET_RANGE, BULLET_SPEED, KEY, PLAYER_MAX_HP } from '/shared/constants.js';
+import {
+  BULLET_RANGE, BULLET_SPEED, KEY, PICKUP_RANGE, PICKUP_SIZE, PLAYER_MAX_AMMO, PLAYER_MAX_HP,
+} from '/shared/constants.js';
 import { castRay, deserializeMap } from '/shared/map.js';
 import { stepPlayer } from '/shared/physics.js';
 import { send } from './net.js';
@@ -18,11 +20,12 @@ const SNAPSHOT_HISTORY = 1000;
 export class ClientGame {
   // `onFire(bullet)` is called whenever a bullet starts, ours or anyone's,
   // with its origin and start time (`t0`, which may be slightly in the future).
-  constructor({ seed, you, ammo, map, players, enemies }, { onFire } = {}) {
+  constructor({ seed, you, ammo, map, players, enemies, pickups }, { onFire } = {}) {
     this.onFire = onFire ?? (() => {});
     this.seed = seed;
     this.you = you;
     this.map = deserializeMap(map);
+    this.pickups = pickups; // [{ id, kind, x, y }]
     this.self = { x: 0, y: 0 };
     this.prev = { x: 0, y: 0 };
     this.hp = PLAYER_MAX_HP;
@@ -45,8 +48,9 @@ export class ClientGame {
     return this.ammo - this.pending.filter((input) => input.keys & KEY.SHOOT).length;
   }
 
-  // Runs one fixed movement step with the given key bits (and aim, if shooting).
-  step(keys, aim) {
+  // Runs one fixed movement step with the given key bits, plus `aim` if
+  // shooting and `pickup` (an id) if taking something.
+  step(keys, aim, pickup) {
     this.prev = { ...this.self };
     if (keys & KEY.SHOOT && this.ammoLeft <= 0) keys &= ~KEY.SHOOT;
     if (!keys || this.down) return;
@@ -57,8 +61,32 @@ export class ClientGame {
       input.aim = aim;
       this.addBullet({ seq: input.seq, x: this.self.x, y: this.self.y, dx: Math.cos(aim), dy: Math.sin(aim) }, performance.now());
     }
+    if (keys & KEY.PICKUP) input.pickup = pickup;
     this.pending.push(input);
     send('input', input);
+  }
+
+  // The pickup under a map point (such as the cursor), or null.
+  pickupAt(x, y) {
+    const half = PICKUP_SIZE / 2;
+    return this.pickups.find((p) => Math.abs(p.x - x) <= half && Math.abs(p.y - y) <= half) ?? null;
+  }
+
+  // The closest pickup we're near enough to take, or null.
+  nearbyPickup() {
+    if (this.down) return null;
+    const dist = (p) => Math.hypot(p.x - this.self.x, p.y - this.self.y);
+    const near = this.pickups.filter((p) => dist(p) <= PICKUP_RANGE);
+    return near.sort((a, b) => dist(a) - dist(b))[0] ?? null;
+  }
+
+  inReach(item) {
+    return !this.down && Math.hypot(item.x - this.self.x, item.y - this.self.y) <= PICKUP_RANGE;
+  }
+
+  // Whether taking the item would do anything (the server checks this too).
+  canTake(item) {
+    return item.kind === 'ammo' && this.ammoLeft < PLAYER_MAX_AMMO;
   }
 
   applyState({ ack, ammo, players, enemies }) {
@@ -70,8 +98,11 @@ export class ClientGame {
     for (const input of this.pending) stepPlayer(this.self, input.keys, this.map);
   }
 
+  // Returns the door that changed.
   applyDoor({ id, open }) {
-    this.map.doors[id].open = open;
+    const door = this.map.doors[id];
+    door.open = open;
+    return door;
   }
 
   // A bullet was fired. Ours is already in flight, so just note its id. Other

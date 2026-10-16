@@ -3,19 +3,27 @@ import { indexDoors } from '../shared/map.js';
 import { createRng } from './rng.js';
 
 // Procedural reactor layout:
-//   1. Scatter randomly sized rooms with a minimum gap between them.
-//   2. Link them with a minimum spanning tree, plus a few extra links for loops.
+//   1. Put a large spawn room in the middle, then scatter randomly sized rooms
+//      around it with a minimum gap between them.
+//   2. Link them with a minimum spanning tree, plus a few extra links for loops,
+//      plus links from the spawn room until it has exits on SPAWN_EXITS walls.
 //   3. Route a corridor for each link with A*. Corridors may not touch other
 //      rooms; where one crosses its own rooms' walls, that opening becomes a door.
+//      Corridors from the spawn room leave through the wall facing their target.
 //   4. Wrap every walkable tile in walls and crop to the used area.
 
 const MAP_W = 84;
 const MAP_H = 64;
-const ROOM_COUNT = 12;
+const ROOM_COUNT = 12; // including the spawn room
 const ROOM_MIN_W = 5;
 const ROOM_MAX_W = 16;
 const ROOM_MIN_H = 5;
 const ROOM_MAX_H = 12;
+const SPAWN_ROOM = 0; // room id
+// At least as big as the largest other room can be, so it's always the biggest.
+const SPAWN_ROOM_W = [ROOM_MAX_W, ROOM_MAX_W + 4];
+const SPAWN_ROOM_H = [ROOM_MAX_H, ROOM_MAX_H + 2];
+const SPAWN_EXITS = 2; // the spawn room has doors on at least this many walls
 const ROOM_GAP = 5; // between room floors: wall + corridor + wall must fit
 const EXTRA_LINKS = 3;
 const CORRIDOR_WIDTH = 2;
@@ -43,13 +51,17 @@ function tryGenerate(rng) {
   for (const [a, b] of linkRooms(rooms, rng)) {
     if (!carveCorridor(grid, rooms[a], rooms[b])) return null;
   }
+  if (spawnExitWalls(grid) < SPAWN_EXITS) return null; // every other room was on one side
 
   const tiles = buildTiles(grid);
-  return finishMap(tiles, rooms, rng);
+  return finishMap(tiles, rooms);
 }
 
 function placeRooms(rng) {
-  const rooms = [];
+  const w = rng.int(...SPAWN_ROOM_W);
+  const h = rng.int(...SPAWN_ROOM_H);
+  const rooms = [{ id: SPAWN_ROOM, x: Math.floor((MAP_W - w) / 2), y: Math.floor((MAP_H - h) / 2), w, h }];
+
   for (let tries = 0; tries < 3000 && rooms.length < ROOM_COUNT; tries++) {
     const w = rng.int(ROOM_MIN_W, ROOM_MAX_W);
     const h = rng.int(ROOM_MIN_H, ROOM_MAX_H);
@@ -75,8 +87,20 @@ function rectsNear(a, b, gap) {
   );
 }
 
+// Which wall of `room` faces `other`, as an index into DIRS: 0 top, 1 right,
+// 2 bottom, 3 left. Offsets are scaled by the room's size, so it's the wall a
+// line from the room's center toward the other room leaves through.
+function wallFacing(room, other) {
+  const dx = (other.x + other.w / 2 - (room.x + room.w / 2)) / room.w;
+  const dy = (other.y + other.h / 2 - (room.y + room.h / 2)) / room.h;
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 1 : 3;
+  return dy > 0 ? 2 : 0;
+}
+
 // Returns [roomIndexA, roomIndexB] pairs: a minimum spanning tree over room
-// centers (Prim's), then a few of the shortest remaining pairs to add loops.
+// centers (Prim's), then a few of the shortest remaining pairs to add loops,
+// then links from the spawn room to the nearest rooms in new directions until
+// it has exits on SPAWN_EXITS walls.
 function linkRooms(rooms, rng) {
   const dist = (a, b) => Math.hypot(
     a.x + a.w / 2 - (b.x + b.w / 2),
@@ -112,7 +136,31 @@ function linkRooms(rooms, rng) {
     links.push([i, j]);
   }
 
+  const spawn = rooms[SPAWN_ROOM];
+  const exitWalls = new Set();
+  for (const [a, b] of links) {
+    if (a === SPAWN_ROOM) exitWalls.add(wallFacing(spawn, rooms[b]));
+    if (b === SPAWN_ROOM) exitWalls.add(wallFacing(spawn, rooms[a]));
+  }
+  const nearest = rooms.filter((r) => r.id !== SPAWN_ROOM).sort((p, q) => dist(spawn, p) - dist(spawn, q));
+  for (const room of nearest) {
+    if (exitWalls.size >= SPAWN_EXITS) break;
+    const wall = wallFacing(spawn, room);
+    if (exitWalls.has(wall)) continue;
+    exitWalls.add(wall);
+    links.push([SPAWN_ROOM, room.id]);
+  }
+
   return links;
+}
+
+// How many different walls of the spawn room corridors pass through.
+function spawnExitWalls(grid) {
+  const walls = new Set();
+  for (let i = 0; i < grid.corridor.length; i++) {
+    if (grid.corridor[i] && grid.wall[i] === SPAWN_ROOM) walls.add(grid.side[i]);
+  }
+  return walls.size;
 }
 
 // Working state while carving: which room's floor or wall each tile belongs to.
@@ -121,6 +169,7 @@ function createGrid(rooms) {
   const grid = {
     floor: new Int16Array(size).fill(-1), // room id whose floor covers the tile
     wall: new Int16Array(size).fill(-1), // room id whose surrounding wall covers the tile
+    side: new Int8Array(size).fill(-1), // which wall of that room, as an index into DIRS
     corner: new Uint8Array(size), // wall corners can never become doors
     corridor: new Uint8Array(size),
   };
@@ -134,6 +183,7 @@ function createGrid(rooms) {
         if (edgeX || edgeY) {
           grid.wall[i] = room.id;
           grid.corner[i] = edgeX && edgeY ? 1 : 0;
+          grid.side[i] = y === room.y - 1 ? 0 : x === room.x + room.w ? 1 : y === room.y + room.h ? 2 : 3;
         } else {
           grid.floor[i] = room.id;
         }
@@ -156,6 +206,9 @@ function carveCorridor(grid, a, b) {
   const goal = { x0: b.x, x1: b.x + b.w - cw, y0: b.y, y1: b.y + b.h - cw };
   const heuristic = (x, y) =>
     Math.max(goal.x0 - x, 0, x - goal.x1) + Math.max(goal.y0 - y, 0, y - goal.y1);
+  // A corridor to or from the spawn room may only cross its wall facing the other room.
+  const spawnWall =
+    a.id === SPAWN_ROOM ? wallFacing(a, b) : b.id === SPAWN_ROOM ? wallFacing(b, a) : -1;
 
   const stepCost = (x, y) => {
     let cost = COST_REUSE;
@@ -171,6 +224,7 @@ function carveCorridor(grid, a, b) {
         const wall = grid.wall[i];
         if (wall >= 0) {
           if ((wall !== a.id && wall !== b.id) || grid.corner[i]) return Infinity;
+          if (wall === SPAWN_ROOM && grid.side[i] !== spawnWall) return Infinity;
           if (!grid.corridor[i]) cost = Math.max(cost, COST_WALL); // reuse existing doors
           continue;
         }
@@ -260,8 +314,8 @@ function touchesWalkable(tiles, x, y) {
   return false;
 }
 
-// Crops to the used area, groups door tiles into door rects and picks a spawn room.
-function finishMap(tiles, rooms, rng) {
+// Crops to the used area and groups door tiles into door rects.
+function finishMap(tiles, rooms) {
   let minX = MAP_W, minY = MAP_H, maxX = 0, maxY = 0;
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
@@ -291,7 +345,7 @@ function finishMap(tiles, rooms, rng) {
   };
   map.doors = findDoors(map);
   map.doorAt = indexDoors(map);
-  map.spawnRoom = rng.pick(map.rooms).id;
+  map.spawnRoom = SPAWN_ROOM;
   return map;
 }
 

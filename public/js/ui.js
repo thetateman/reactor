@@ -1,7 +1,7 @@
 // DOM screens around the game canvas: home (create / join), lobby, in-game
 // HUD and menu, and a full-screen overlay for connection problems.
 
-import { PLAYER_AMMO, PLAYER_MAX_HP } from '/shared/constants.js';
+import { PLAYER_MAX_AMMO, PLAYER_MAX_HP } from '/shared/constants.js';
 
 const $ = (id) => document.getElementById(id);
 const NAME_KEY = 'reactor.name';
@@ -109,7 +109,7 @@ export function createUi(actions) {
     },
 
     renderAmmo(ammo) {
-      const text = ammo > 0 ? `${ammo}/${PLAYER_AMMO}` : 'empty';
+      const text = ammo > 0 ? `${ammo}/${PLAYER_MAX_AMMO}` : 'empty';
       if ($('ammo-text').textContent === text) return; // called every frame
       $('ammo-text').textContent = text;
       $('ammo-text').classList.toggle('empty', ammo <= 0);

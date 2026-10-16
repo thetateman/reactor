@@ -13,7 +13,7 @@ npm test         # map generation and movement tests
 
 Then open http://localhost:3000, enter a name and create a game. Share the four-letter code or the invite link (`/?lobby=CODE`); the host starts the game once everyone is in. Client changes only need a browser refresh.
 
-Controls: <kbd>WASD</kbd> or arrow keys to move, left click to shoot toward the cursor, <kbd>E</kbd> to open or close a nearby door, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
+Controls: <kbd>WASD</kbd> or arrow keys to move, left click to shoot toward the cursor, right click a nearby item (such as the ammo stack in the spawn room) to pick it up, <kbd>E</kbd> to open or close a nearby door, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
 
 Players are identified by their session cookie, so:
 
