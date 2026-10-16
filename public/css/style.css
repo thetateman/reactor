@@ -1,8 +1,12 @@
 :root {
   --bg: #07090c;
+  --surface: #11161d;
+  --border: #2b333e;
   --fg: #e6edf3;
   --muted: #8b949e;
   --accent: #3fb950;
+  --accent-fg: #04260f;
+  --danger: #ff7b72;
   --panel: rgba(7, 9, 12, 0.75);
   font-family: system-ui, sans-serif;
   color-scheme: dark;
@@ -19,11 +23,184 @@ body {
   color: var(--fg);
 }
 
+[hidden] {
+  display: none !important;
+}
+
 #view {
   display: block;
   width: 100vw;
   height: 100vh;
 }
+
+/* Menus */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(7, 9, 12, 0.6);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, 100%);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.card h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.title {
+  margin: 0 0 8px;
+  color: var(--accent);
+  letter-spacing: 0.15em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.code {
+  margin: 0;
+  font: 700 40px ui-monospace, monospace;
+  letter-spacing: 0.2em;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.grow {
+  flex: 1;
+}
+
+input,
+button {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.code-input {
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+button {
+  cursor: pointer;
+  background: #1b222c;
+}
+
+button:hover {
+  background: #232c38;
+}
+
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: #4cc95e;
+}
+
+.divider {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.players {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.players li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.players li.away {
+  opacity: 0.5;
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--color);
+}
+
+.players .tags {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* In-game HUD */
 
 .hud {
   position: fixed;
@@ -67,13 +244,16 @@ kbd {
 .overlay {
   position: fixed;
   inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(7, 9, 12, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(7, 9, 12, 0.8);
   color: var(--fg);
   font-size: 18px;
 }
 
-.overlay[hidden] {
-  display: none;
+.overlay p {
+  margin: 0;
 }

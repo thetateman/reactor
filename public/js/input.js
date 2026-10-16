@@ -32,6 +32,7 @@ export function sampleKeys() {
 
 window.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.target instanceof HTMLInputElement) return; // typing a name or code
 
   const bit = MOVEMENT[event.code];
   if (bit) {

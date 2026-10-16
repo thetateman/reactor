@@ -10,14 +10,60 @@
 <body>
   <canvas id="view"></canvas>
 
-  <div class="hud">
+  <section id="screen-home" class="screen" hidden>
+    <div class="card">
+      <h1 class="title">Reactor</h1>
+      <label class="field">
+        <span>Your name</span>
+        <input id="name" maxlength="16" autocomplete="nickname" spellcheck="false">
+      </label>
+      <button id="create" class="primary">Create game</button>
+      <div class="divider">or join a friend</div>
+      <form id="join-form" class="row">
+        <input id="code" class="code-input" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Game code">
+        <button>Join</button>
+      </form>
+      <p id="home-error" class="error" hidden></p>
+    </div>
+  </section>
+
+  <section id="screen-lobby" class="screen" hidden>
+    <div class="card">
+      <p class="eyebrow">Game code</p>
+      <h1 id="lobby-code" class="code"></h1>
+      <div class="row">
+        <input id="invite-link" readonly aria-label="Invite link">
+        <button id="copy-link">Copy link</button>
+      </div>
+      <ul id="lobby-players" class="players"></ul>
+      <p id="lobby-status" class="muted"></p>
+      <div class="row">
+        <button id="leave">Leave</button>
+        <button id="start" class="primary grow">Start game</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="hud" class="hud" hidden>
     <div class="hud-title">Reactor</div>
-    <div id="hud-info" class="hud-info">connecting…</div>
+    <div id="hud-info" class="hud-info"></div>
     <div class="hud-help">
-      <kbd>WASD</kbd> move · <kbd>E</kbd> open / close door · <kbd>N</kbd> new map
+      <kbd>WASD</kbd> move · <kbd>E</kbd> open / close door · <kbd>Esc</kbd> menu
     </div>
   </div>
 
-  <div id="overlay" class="overlay" hidden>Disconnected — reconnecting…</div>
+  <section id="menu" class="screen" hidden>
+    <div class="card">
+      <h2>Menu</h2>
+      <button id="resume" class="primary">Resume</button>
+      <button id="end-game">End game for everyone</button>
+      <button id="leave-game">Leave game</button>
+    </div>
+  </section>
+
+  <div id="overlay" class="overlay" hidden>
+    <p id="overlay-text"></p>
+    <button id="overlay-button" hidden></button>
+  </div>
 </body>
 </html>

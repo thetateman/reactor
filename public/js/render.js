@@ -16,16 +16,15 @@ const COLORS = {
   door: '#c99a2e',
   doorSeam: '#6b4f12',
   doorOpen: 'rgba(201, 154, 46, 0.18)',
-  self: '#3fb950',
-  selfEdge: '#1b5e28',
-  other: '#58a6ff',
-  otherEdge: '#1f4f8a',
+  player: '#8b949e', // fallback when a player isn't in the roster
+  playerEdge: 'rgba(0, 0, 0, 0.45)',
   highlight: '#f0f6fc',
   panel: 'rgba(7, 9, 12, 0.75)',
   miniRoom: '#3a4554',
   miniCorridor: '#2c3541',
   miniWall: '#5c6878',
 };
+const AWAY_ALPHA = 0.35; // disconnected players are drawn faded
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -51,15 +50,28 @@ export function createRenderer(canvas) {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     },
 
-    draw(game, alpha) {
+    // `roster` maps player id to { name, color, connected } from the lobby.
+    // `alpha` blends our own position between movement steps; `now` places
+    // other players on their interpolation timeline.
+    draw(game, roster, alpha, now) {
       const { map } = game;
-      const self = game.selfAt(alpha);
+      const self = { id: game.you, ...game.selfAt(alpha) };
+      const players = [...game.othersAt(now), self].map((p) => ({
+        ...p,
+        name: roster.get(p.id)?.name ?? '',
+        color: roster.get(p.id)?.color ?? COLORS.player,
+        away: roster.get(p.id)?.connected === false,
+      }));
       const viewW = canvas.width / dpr;
       const viewH = canvas.height / dpr;
       const cam = {
         x: follow(self.x, map.width, viewW / TILE_PX),
         y: follow(self.y, map.height, viewH / TILE_PX),
       };
+      const toScreen = (x, y) => ({
+        x: (x - cam.x) * TILE_PX + viewW / 2,
+        y: (y - cam.y) * TILE_PX + viewH / 2,
+      });
 
       this.clear();
 
@@ -73,17 +85,19 @@ export function createRenderer(canvas) {
       drawMap(ctx, layers);
       const target = nearestDoor(map, game.self.x, game.self.y);
       drawDoors(ctx, map.doors, target);
-      for (const other of game.others) drawPlayer(ctx, other, COLORS.other, COLORS.otherEdge);
-      drawPlayer(ctx, self, COLORS.self, COLORS.selfEdge);
+      for (const player of players) drawPlayer(ctx, player); // ours is last, so on top
 
       // Overlay pass, in CSS pixels.
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (target) {
-        const sx = (target.x + target.w / 2 - cam.x) * TILE_PX + viewW / 2;
-        const sy = (target.y - cam.y) * TILE_PX + viewH / 2;
-        drawPrompt(ctx, sx, sy - 10, target.open ? 'Close' : 'Open');
+      for (const player of players) {
+        const pos = toScreen(player.x, player.y - PLAYER_SIZE / 2);
+        drawName(ctx, pos.x, pos.y - 6, player);
       }
-      drawMinimap(ctx, layers.minimap, map, self, cam, viewW, viewH);
+      if (target) {
+        const pos = toScreen(target.x + target.w / 2, target.y);
+        drawPrompt(ctx, pos.x, pos.y - 10, target.open ? 'Close' : 'Open');
+      }
+      drawMinimap(ctx, layers.minimap, map, players, cam, viewW, viewH);
     },
   };
 }
@@ -196,14 +210,33 @@ function drawDoors(ctx, doors, target) {
   }
 }
 
-function drawPlayer(ctx, pos, fill, edge) {
+function drawPlayer(ctx, { x, y, color, away }) {
   const half = PLAYER_SIZE / 2;
   const inset = 1.5 / TILE_PX;
-  ctx.fillStyle = fill;
-  ctx.fillRect(pos.x - half, pos.y - half, PLAYER_SIZE, PLAYER_SIZE);
-  ctx.strokeStyle = edge;
+  ctx.globalAlpha = away ? AWAY_ALPHA : 1;
+  ctx.fillStyle = color;
+  ctx.fillRect(x - half, y - half, PLAYER_SIZE, PLAYER_SIZE);
+  ctx.strokeStyle = COLORS.playerEdge;
   ctx.lineWidth = 3 / TILE_PX;
-  ctx.strokeRect(pos.x - half + inset, pos.y - half + inset, PLAYER_SIZE - 2 * inset, PLAYER_SIZE - 2 * inset);
+  ctx.strokeRect(x - half + inset, y - half + inset, PLAYER_SIZE - 2 * inset, PLAYER_SIZE - 2 * inset);
+  ctx.globalAlpha = 1;
+}
+
+// Name tag centered above (x, y), which is the top edge of the player.
+function drawName(ctx, x, y, { name, away }) {
+  if (!name) return;
+  const label = away ? `${name} (disconnected)` : name;
+  ctx.globalAlpha = away ? AWAY_ALPHA * 2 : 1;
+  ctx.font = '600 12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = COLORS.void;
+  ctx.strokeText(label, x, y);
+  ctx.fillStyle = COLORS.highlight;
+  ctx.fillText(label, x, y);
+  ctx.globalAlpha = 1;
 }
 
 // A "[E] Open" hint centered above (x, y).
@@ -237,7 +270,7 @@ function drawPrompt(ctx, x, y, label) {
   ctx.fillText(label, left + 4 + keyW + gap, top + h / 2 + 1);
 }
 
-function drawMinimap(ctx, image, map, self, cam, viewW, viewH) {
+function drawMinimap(ctx, image, map, players, cam, viewW, viewH) {
   const s = MINIMAP_PX;
   const w = map.width * s;
   const h = map.height * s;
@@ -268,6 +301,12 @@ function drawMinimap(ctx, image, map, self, cam, viewW, viewH) {
   ctx.strokeRect(left + (cam.x - tilesW / 2) * s, top + (cam.y - tilesH / 2) * s, tilesW * s, tilesH * s);
   ctx.restore();
 
-  ctx.fillStyle = COLORS.self;
-  ctx.fillRect(left + self.x * s - 2.5, top + self.y * s - 2.5, 5, 5);
+  for (const { x, y, color, away } of players) {
+    ctx.globalAlpha = away ? AWAY_ALPHA : 1;
+    ctx.fillStyle = COLORS.void;
+    ctx.fillRect(left + x * s - 3.5, top + y * s - 3.5, 7, 7);
+    ctx.fillStyle = color;
+    ctx.fillRect(left + x * s - 2.5, top + y * s - 2.5, 5, 5);
+  }
+  ctx.globalAlpha = 1;
 }

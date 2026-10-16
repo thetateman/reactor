@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TILE } from '../shared/constants.js';
-import { tileAt } from '../shared/map.js';
+import { roomCenter, tileAt } from '../shared/map.js';
 import { generateMap } from '../server/mapgen.js';
 
 const SEEDS = Array.from({ length: 300 }, (_, i) => i * 7919 + 1);
@@ -13,14 +13,15 @@ test('same seed produces the same map', () => {
   const b = generateMap(1234);
   assert.deepEqual(a.tiles, b.tiles);
   assert.deepEqual(a.doors, b.doors);
-  assert.deepEqual(a.spawn, b.spawn);
+  assert.equal(a.spawnRoom, b.spawnRoom);
 });
 
 test('every walkable tile is reachable from spawn, with doors open', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
     const { width, tiles } = map;
-    const start = Math.floor(map.spawn.y) * width + Math.floor(map.spawn.x);
+    const spawn = roomCenter(map.rooms[map.spawnRoom]);
+    const start = Math.floor(spawn.y) * width + Math.floor(spawn.x);
     assert.equal(tiles[start], TILE.FLOOR, `seed ${seed}: spawn is not on floor`);
 
     const seen = new Uint8Array(tiles.length);

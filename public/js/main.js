@@ -3,60 +3,98 @@ import { ClientGame } from './game.js';
 import { onKey, sampleKeys } from './input.js';
 import { connect, on, send } from './net.js';
 import { createRenderer } from './render.js';
+import { createUi } from './ui.js';
 
 const MAX_FRAME_TIME = 0.25; // seconds; avoids a burst of steps after the tab was hidden
+const RECONNECT_DELAY = 1000;
 
-const $ = (id) => document.getElementById(id);
-const renderer = createRenderer($('view'));
+const renderer = createRenderer(document.getElementById('view'));
+const ui = createUi({
+  create: (name) => send('createLobby', { name }),
+  join: (code, name) => send('joinLobby', { code, name }),
+  leave: () => send('leaveLobby'),
+  start: () => send('startGame'),
+  endGame: () => send('endGame'),
+  resume: () => setMenu(false),
+  reconnect: () => start(),
+});
 
+let you = null;
+let lobby = null; // lobby summary from the server, or null when not in one
+let roster = new Map(); // player id -> { name, color, connected, ... }
 let game = null;
+let menuOpen = false;
 let latency = null;
+let replaced = false;
+
+on('lobby', ({ lobby: next }) => {
+  lobby = next;
+  roster = new Map((lobby?.players ?? []).map((p) => [p.id, p]));
+  if (lobby?.phase !== 'playing') game = null;
+  history.replaceState(null, '', lobby ? `?lobby=${lobby.code}` : location.pathname);
+  updateScreen();
+});
 
 on('game', (msg) => {
   game = new ClientGame(msg);
   renderer.setMap(game.map);
-  history.replaceState(null, '', `?seed=${msg.seed}`);
-  updateHud();
+  menuOpen = false;
+  updateScreen();
 });
 
 on('state', (msg) => game?.applyState(msg));
 on('door', (msg) => game?.applyDoor(msg));
+on('error', ({ message }) => ui.showError(message));
 
 on('pong', ({ t }) => {
   latency = Math.round(performance.now() - t);
-  updateHud();
+  if (game) ui.renderHud(lobby, latency);
+});
+
+// Another tab connected as this player and took over.
+on('replaced', () => {
+  replaced = true;
 });
 
 on('close', () => {
   game = null;
-  $('overlay').hidden = false;
-  setTimeout(start, 1000);
+  if (replaced) {
+    ui.showOverlay('Reactor is open in another tab.', 'Play here');
+  } else {
+    ui.showOverlay('Disconnected — reconnecting…');
+    setTimeout(start, RECONNECT_DELAY);
+  }
 });
 
-// N: new random map. Input stops until the server sends the new game.
-onKey('KeyN', () => {
-  game = null;
-  send('newGame');
+onKey('Escape', () => {
+  if (game) setMenu(!menuOpen);
 });
 
-function seedFromUrl() {
-  const seed = Number(new URLSearchParams(location.search).get('seed'));
-  return Number.isInteger(seed) && seed > 0 ? seed : undefined;
+function setMenu(open) {
+  menuOpen = open;
+  updateScreen();
 }
 
-function updateHud() {
-  const seed = game ? `seed ${game.seed}` : 'loading…';
-  $('hud-info').textContent = `${seed} · ${latency ?? '–'} ms`;
+function updateScreen() {
+  const screen = !lobby ? 'home' : game ? 'game' : 'lobby';
+  ui.show(screen);
+  if (screen === 'lobby') ui.renderLobby(lobby, you);
+  if (screen === 'game') {
+    ui.renderHud(lobby, latency);
+    ui.setMenu(menuOpen, lobby.hostId === you);
+  }
 }
 
-// Connects (or reconnects after a server restart) and rejoins the map in the URL.
+// Connects, or reconnects after a drop. The server replies with our lobby (if
+// we still have a place in one) and our game, so this also resumes play.
 async function start() {
+  replaced = false;
   try {
-    await connect();
-    $('overlay').hidden = true;
-    send('newGame', { seed: seedFromUrl() });
+    you = await connect();
+    ui.hideOverlay();
   } catch {
-    setTimeout(start, 1000);
+    ui.showOverlay('Disconnected — reconnecting…');
+    setTimeout(start, RECONNECT_DELAY);
   }
 }
 
@@ -68,11 +106,11 @@ function frame(now) {
   last = now;
   while (acc >= SIM_STEP) {
     const keys = sampleKeys();
-    game?.step(keys);
+    game?.step(menuOpen ? 0 : keys);
     acc -= SIM_STEP;
   }
 
-  if (game) renderer.draw(game, acc / SIM_STEP);
+  if (game) renderer.draw(game, roster, acc / SIM_STEP, now);
   else renderer.clear();
   requestAnimationFrame(frame);
 }

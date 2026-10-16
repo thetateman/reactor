@@ -11,11 +11,17 @@ npm start        # plain run
 npm test         # map generation and movement tests
 ```
 
-Then open http://localhost:3000. Client changes only need a browser refresh; after a server restart the page reconnects on its own.
+Then open http://localhost:3000, enter a name and create a game. Share the four-letter code or the invite link (`/?lobby=CODE`); the host starts the game once everyone is in. Client changes only need a browser refresh.
 
-Controls: <kbd>WASD</kbd> or arrow keys to move, <kbd>E</kbd> to open or close a nearby door, <kbd>N</kbd> for a new map.
+Controls: <kbd>WASD</kbd> or arrow keys to move, <kbd>E</kbd> to open or close a nearby door, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
 
-The current map's seed is shown in the HUD and kept in the URL (`?seed=123`), so reloading or sharing the link gives the same map.
+Players are identified by their session cookie, so:
+
+- Refreshing the page, or a dropped connection, puts you back in your lobby and game. A disconnected player keeps their place for 60 seconds.
+- To test with several players on one machine, use a separate browser or a private window for each. Tabs in the same browser are the same player; opening a second one takes over from the first.
+- Lobbies live in server memory, so restarting the server (including `npm run dev` reloads) ends them.
+
+Friends on your network can join at `http://<your-ip>:3000`.
 
 Environment variables (all optional in development):
 
@@ -28,7 +34,8 @@ Environment variables (all optional in development):
 
 ```
 server/
-  index.js         Express app, sessions, WebSocket server
+  index.js         Express app, sessions, WebSocket server, message routing
+  lobby.js         Lobbies: codes, membership, host, reconnects, starting games
   game.js          A running match: applies player inputs, broadcasts state
   mapgen.js        Procedural map generation from a seed
   rng.js           Seeded random numbers
@@ -37,8 +44,9 @@ shared/            Imported by both server and browser (served at /shared)
   map.js           Map data helpers: solidity, doors
   physics.js       Player movement and wall collision
 public/            Static client (served as-is, no build step)
-  js/main.js       Entry point: connection, game loop
-  js/game.js       Client game state and movement prediction
+  js/main.js       Entry point: connection, screen switching, game loop
+  js/ui.js         Home, lobby and menu screens
+  js/game.js       Client game state, movement prediction, interpolation
   js/render.js     Canvas drawing and minimap
   js/input.js      Keyboard handling
   js/net.js        WebSocket wrapper (JSON messages keyed by `type`)

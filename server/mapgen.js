@@ -260,7 +260,7 @@ function touchesWalkable(tiles, x, y) {
   return false;
 }
 
-// Crops to the used area, groups door tiles into door rects and picks a spawn.
+// Crops to the used area, groups door tiles into door rects and picks a spawn room.
 function finishMap(tiles, rooms, rng) {
   let minX = MAP_W, minY = MAP_H, maxX = 0, maxY = 0;
   for (let y = 0; y < MAP_H; y++) {
@@ -291,9 +291,7 @@ function finishMap(tiles, rooms, rng) {
   };
   map.doors = findDoors(map);
   map.doorAt = indexDoors(map);
-
-  const room = rng.pick(map.rooms);
-  map.spawn = { x: room.x + room.w / 2, y: room.y + room.h / 2 };
+  map.spawnRoom = rng.pick(map.rooms).id;
   return map;
 }
 

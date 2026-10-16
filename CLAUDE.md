@@ -16,7 +16,10 @@ Keep the stack deliberately simple. Do not add frameworks, bundlers, TypeScript,
 - The server is authoritative. Clients only send input; the server owns positions, doors and all future game state. Never send a client information its player shouldn't have (anything sent is readable in devtools).
 - Movement runs in fixed steps (`SIM_STEP`). Each step with keys held, the client applies the input locally, sends it as `{ type: 'input', seq, keys }`, and keeps it until acknowledged. The server applies queued inputs on its tick (limited to real time) and replies with `{ type: 'state', ack, players }`; the client resets to the server position and replays inputs newer than `ack`.
 - Because of that replay, `shared/physics.js` must stay deterministic: same inputs and map must give bit-identical positions on server and client.
+- Other players are drawn about 100 ms in the past, interpolated between server snapshots (`ClientGame.othersAt`).
 - Maps are generated on the server from a seed (`server/mapgen.js`) and sent whole to the client.
+- `server/lobby.js` owns lobbies and membership; a lobby has at most one `Game` at a time, whose player list is fixed at start. Identity is the session's `playerId`: each player has one live socket (a new tab replaces the old), and on every connection the server sends `{ type: 'lobby', lobby }` (null if not in one), followed by `game` if they're playing, so reconnecting resumes play. Disconnected players keep their place for a grace period.
+- The client picks its screen from that state alone: no lobby → home, lobby without a game → lobby screen, game → play.
 
 ## Conventions
 
