@@ -47,9 +47,23 @@
   <div id="hud" class="hud" hidden>
     <div class="hud-title">Reactor</div>
     <div id="hud-info" class="hud-info"></div>
-    <div class="hud-help">
-      <kbd>WASD</kbd> move · <kbd>E</kbd> open / close door · <kbd>Esc</kbd> menu
+    <div class="hud-health">
+      <span>HP</span>
+      <div class="health-track"><div id="health-fill" class="health-fill"></div></div>
+      <span id="health-text"></span>
     </div>
+    <div class="hud-ammo">
+      <span>Ammo</span>
+      <span id="ammo-text"></span>
+    </div>
+    <div class="hud-help">
+      <kbd>WASD</kbd> move · <kbd>Click</kbd> shoot · <kbd>E</kbd> open / close door · <kbd>Esc</kbd> menu
+    </div>
+  </div>
+
+  <div id="down-notice" class="down-notice" hidden>
+    <strong>You're down</strong>
+    <span>Press <kbd>Esc</kbd> for the menu.</span>
   </div>
 
   <section id="menu" class="screen" hidden>

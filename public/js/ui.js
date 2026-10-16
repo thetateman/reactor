@@ -1,6 +1,8 @@
 // DOM screens around the game canvas: home (create / join), lobby, in-game
 // HUD and menu, and a full-screen overlay for connection problems.
 
+import { PLAYER_AMMO, PLAYER_MAX_HP } from '/shared/constants.js';
+
 const $ = (id) => document.getElementById(id);
 const NAME_KEY = 'reactor.name';
 
@@ -71,7 +73,10 @@ export function createUi(actions) {
     show(screen) {
       for (const [name, el] of Object.entries(screens)) el.hidden = name !== screen;
       if (screen !== 'home') $('home-error').hidden = true;
-      if (screen !== 'game') $('menu').hidden = true;
+      if (screen !== 'game') {
+        $('menu').hidden = true;
+        $('down-notice').hidden = true;
+      }
     },
 
     renderLobby(lobby, you) {
@@ -93,6 +98,21 @@ export function createUi(actions) {
     renderHud(lobby, latency) {
       const ping = latency === null ? '–' : latency;
       $('hud-info').textContent = `game ${lobby.code} · seed ${lobby.seed} · ${ping} ms`;
+    },
+
+    renderHealth(hp, down) {
+      const frac = Math.max(0, Math.min(1, hp / PLAYER_MAX_HP));
+      $('health-fill').style.width = `${frac * 100}%`;
+      $('health-fill').className = `health-fill ${frac > 0.5 ? '' : frac > 0.25 ? 'mid' : 'low'}`;
+      $('health-text').textContent = `${Math.ceil(hp)}/${PLAYER_MAX_HP}`;
+      $('down-notice').hidden = !down;
+    },
+
+    renderAmmo(ammo) {
+      const text = ammo > 0 ? `${ammo}/${PLAYER_AMMO}` : 'empty';
+      if ($('ammo-text').textContent === text) return; // called every frame
+      $('ammo-text').textContent = text;
+      $('ammo-text').classList.toggle('empty', ammo <= 0);
     },
 
     setMenu(open, isHost) {

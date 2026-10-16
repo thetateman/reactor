@@ -14,20 +14,33 @@ const MOVEMENT = {
 const actions = new Map();
 let held = 0;
 let interactPressed = false;
+let shotAim = null; // angle of a click not yet sent, in radians
 
 // Registers a one-shot handler for a key press (ignores auto-repeat).
 export function onKey(code, handler) {
   actions.set(code, handler);
 }
 
-// Keys for the next movement step. Interact is reported once per press.
-export function sampleKeys() {
+// Fires on the next movement step, toward angle `aim`.
+export function queueShot(aim) {
+  shotAim = aim;
+}
+
+// Input for the next movement step: { keys, aim }. Interact and shots are
+// reported once per press or click.
+export function sampleInput() {
   let keys = held;
+  let aim;
   if (interactPressed) {
     keys |= KEY.INTERACT;
     interactPressed = false;
   }
-  return keys;
+  if (shotAim !== null) {
+    keys |= KEY.SHOOT;
+    aim = shotAim;
+    shotAim = null;
+  }
+  return { keys, aim };
 }
 
 window.addEventListener('keydown', (event) => {

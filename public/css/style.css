@@ -7,6 +7,7 @@
   --accent: #3fb950;
   --accent-fg: #04260f;
   --danger: #ff7b72;
+  --warning: #d29922;
   --panel: rgba(7, 9, 12, 0.75);
   font-family: system-ui, sans-serif;
   color-scheme: dark;
@@ -31,6 +32,7 @@ body {
   display: block;
   width: 100vw;
   height: 100vh;
+  cursor: crosshair;
 }
 
 /* Menus */
@@ -227,10 +229,79 @@ button.primary:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.hud-health {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--muted);
+  font: 12px ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-track {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.health-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+
+.health-fill.mid {
+  background: var(--warning);
+}
+
+.health-fill.low {
+  background: var(--danger);
+}
+
+.hud-ammo {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: var(--muted);
+  font: 12px ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-ammo .empty {
+  color: var(--danger);
+}
+
 .hud-help {
   margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.down-notice {
+  position: fixed;
+  top: 30%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 24px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.down-notice strong {
+  color: var(--danger);
+  font-size: 20px;
 }
 
 kbd {

@@ -44,6 +44,44 @@ export function isSolid(map, x, y) {
   return true;
 }
 
+// Distance from (x, y) along the unit direction (dx, dy) to the first wall or
+// closed door, or `maxDist` if there's none within it. Walks the tiles the
+// ray passes through, one tile edge at a time.
+export function castRay(map, x, y, dx, dy, maxDist) {
+  let tx = Math.floor(x);
+  let ty = Math.floor(y);
+  if (isSolid(map, tx, ty)) return 0; // starting exactly on a wall's edge
+  const stepX = Math.sign(dx);
+  const stepY = Math.sign(dy);
+  // Ray length to cross one whole tile, and to reach the next tile edge, per axis.
+  const deltaX = stepX ? 1 / Math.abs(dx) : Infinity;
+  const deltaY = stepY ? 1 / Math.abs(dy) : Infinity;
+  let nextX = stepX > 0 ? (tx + 1 - x) * deltaX : stepX < 0 ? (x - tx) * deltaX : Infinity;
+  let nextY = stepY > 0 ? (ty + 1 - y) * deltaY : stepY < 0 ? (y - ty) * deltaY : Infinity;
+
+  for (;;) {
+    let dist;
+    if (nextX < nextY) {
+      dist = nextX;
+      nextX += deltaX;
+      tx += stepX;
+    } else {
+      dist = nextY;
+      nextY += deltaY;
+      ty += stepY;
+    }
+    if (dist >= maxDist) return maxDist;
+    if (isSolid(map, tx, ty)) return dist;
+  }
+}
+
+// Whether a straight line between two points crosses only open tiles.
+export function lineOfSight(map, x0, y0, x1, y1) {
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  if (len === 0) return true;
+  return castRay(map, x0, y0, (x1 - x0) / len, (y1 - y0) / len, len) >= len;
+}
+
 // The closest door whose rect is within reach of the point, or null.
 export function nearestDoor(map, x, y, range = INTERACT_RANGE) {
   let best = null;

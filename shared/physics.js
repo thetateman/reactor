@@ -5,7 +5,7 @@ import { isSolid } from './map.js';
 // client predicts its own movement and replays unacknowledged inputs on top
 // of the server's position. Keep this deterministic: no randomness, no clocks.
 
-const HALF = PLAYER_SIZE / 2;
+export const PLAYER_HALF = PLAYER_SIZE / 2;
 const EPS = 1e-6;
 const DIAGONAL = Math.SQRT1_2;
 
@@ -19,37 +19,42 @@ export function stepPlayer(body, keys, map) {
   }
 
   const dist = PLAYER_SPEED * SIM_STEP;
-  moveX(body, dx * dist, map);
-  moveY(body, dy * dist, map);
+  moveBody(body, dx * dist, dy * dist, PLAYER_HALF, map);
 }
 
-// Each axis moves less than one tile per step, so only the leading row or
-// column of tiles can newly overlap the body.
-function moveX(body, delta, map) {
+// Moves a square body (center `body.x`/`body.y`, half-width `half`) by
+// (dx, dy), sliding along walls and closed doors. Each component must be
+// less than one tile, so only the leading row or column can newly overlap.
+export function moveBody(body, dx, dy, half, map) {
+  moveX(body, dx, half, map);
+  moveY(body, dy, half, map);
+}
+
+function moveX(body, delta, half, map) {
   if (!delta) return;
   body.x += delta;
-  const top = Math.floor(body.y - HALF + EPS);
-  const bottom = Math.floor(body.y + HALF - EPS);
+  const top = Math.floor(body.y - half + EPS);
+  const bottom = Math.floor(body.y + half - EPS);
   if (delta > 0) {
-    const col = Math.floor(body.x + HALF - EPS);
-    if (anySolid(map, col, col, top, bottom)) body.x = col - HALF;
+    const col = Math.floor(body.x + half - EPS);
+    if (anySolid(map, col, col, top, bottom)) body.x = col - half;
   } else {
-    const col = Math.floor(body.x - HALF + EPS);
-    if (anySolid(map, col, col, top, bottom)) body.x = col + 1 + HALF;
+    const col = Math.floor(body.x - half + EPS);
+    if (anySolid(map, col, col, top, bottom)) body.x = col + 1 + half;
   }
 }
 
-function moveY(body, delta, map) {
+function moveY(body, delta, half, map) {
   if (!delta) return;
   body.y += delta;
-  const left = Math.floor(body.x - HALF + EPS);
-  const right = Math.floor(body.x + HALF - EPS);
+  const left = Math.floor(body.x - half + EPS);
+  const right = Math.floor(body.x + half - EPS);
   if (delta > 0) {
-    const row = Math.floor(body.y + HALF - EPS);
-    if (anySolid(map, left, right, row, row)) body.y = row - HALF;
+    const row = Math.floor(body.y + half - EPS);
+    if (anySolid(map, left, right, row, row)) body.y = row - half;
   } else {
-    const row = Math.floor(body.y - HALF + EPS);
-    if (anySolid(map, left, right, row, row)) body.y = row + 1 + HALF;
+    const row = Math.floor(body.y - half + EPS);
+    if (anySolid(map, left, right, row, row)) body.y = row + 1 + half;
   }
 }
 
@@ -62,12 +67,12 @@ function anySolid(map, x0, x1, y0, y1) {
   return false;
 }
 
-// Whether a player body overlaps the given rect (used to stop doors closing on someone).
-export function bodyOverlapsRect(body, rect) {
+// Whether a square body overlaps the given rect (used to stop doors closing on someone).
+export function bodyOverlapsRect(body, rect, half = PLAYER_HALF) {
   return (
-    body.x + HALF > rect.x &&
-    body.x - HALF < rect.x + rect.w &&
-    body.y + HALF > rect.y &&
-    body.y - HALF < rect.y + rect.h
+    body.x + half > rect.x &&
+    body.x - half < rect.x + rect.w &&
+    body.y + half > rect.y &&
+    body.y - half < rect.y + rect.h
   );
 }

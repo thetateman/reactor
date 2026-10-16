@@ -1,10 +1,15 @@
-import { PLAYER_SIZE, TILE } from '/shared/constants.js';
+import { ENEMY_MAX_HP, ENEMY_RADIUS, PLAYER_MAX_HP, PLAYER_SIZE, TILE } from '/shared/constants.js';
 import { nearestDoor } from '/shared/map.js';
 
 const TILE_PX = 32; // CSS pixels per tile in the main view
 const MINIMAP_PX = 3; // CSS pixels per tile in the minimap
 const MARGIN = 16;
 const WALL_EDGE = 0.12; // lit strip along wall faces, in tiles
+const HEALTH_BAR = { w: 30, h: 4 }; // CSS pixels
+const ENEMY_HEALTH_BAR = { w: 20, h: 3 };
+const HURT_FLASH_MS = 300;
+const BULLET_RADIUS = 0.08; // tiles
+const BULLET_TRAIL = 0.6; // tiles
 
 const COLORS = {
   void: '#07090c',
@@ -18,6 +23,16 @@ const COLORS = {
   doorOpen: 'rgba(201, 154, 46, 0.18)',
   player: '#8b949e', // fallback when a player isn't in the roster
   playerEdge: 'rgba(0, 0, 0, 0.45)',
+  downed: '#484f58',
+  enemy: '#f85149',
+  enemyEdge: 'rgba(0, 0, 0, 0.5)',
+  hpHigh: '#3fb950',
+  hpMid: '#d29922',
+  hpLow: '#f85149',
+  hpTrack: 'rgba(7, 9, 12, 0.85)',
+  hurt: '248, 81, 73', // rgb, for the damage vignette
+  bullet: '#ffd33d',
+  bulletTrail: 'rgba(255, 211, 61, 0.35)',
   highlight: '#f0f6fc',
   panel: 'rgba(7, 9, 12, 0.75)',
   miniRoom: '#3a4554',
@@ -30,6 +45,7 @@ export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let dpr = 1;
   let layers = null;
+  let view = null; // camera of the last frame drawn, for mapping clicks to the world
 
   function resize() {
     dpr = window.devicePixelRatio || 1;
@@ -50,18 +66,29 @@ export function createRenderer(canvas) {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     },
 
+    // The world point (in tiles) under a viewport position, as drawn last frame.
+    screenToWorld(clientX, clientY) {
+      if (!view) return null;
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left - view.w / 2) / TILE_PX + view.cam.x,
+        y: (clientY - rect.top - view.h / 2) / TILE_PX + view.cam.y,
+      };
+    },
+
     // `roster` maps player id to { name, color, connected } from the lobby.
     // `alpha` blends our own position between movement steps; `now` places
-    // other players on their interpolation timeline.
+    // other players and enemies on their interpolation timeline.
     draw(game, roster, alpha, now) {
       const { map } = game;
-      const self = { id: game.you, ...game.selfAt(alpha) };
+      const self = { id: game.you, ...game.selfAt(alpha), hp: game.hp, down: game.down };
       const players = [...game.othersAt(now), self].map((p) => ({
         ...p,
         name: roster.get(p.id)?.name ?? '',
         color: roster.get(p.id)?.color ?? COLORS.player,
         away: roster.get(p.id)?.connected === false,
       }));
+      const enemies = game.enemiesAt(now);
       const viewW = canvas.width / dpr;
       const viewH = canvas.height / dpr;
       const cam = {
@@ -72,6 +99,7 @@ export function createRenderer(canvas) {
         x: (x - cam.x) * TILE_PX + viewW / 2,
         y: (y - cam.y) * TILE_PX + viewH / 2,
       });
+      view = { cam, w: viewW, h: viewH };
 
       this.clear();
 
@@ -83,21 +111,32 @@ export function createRenderer(canvas) {
         Math.round(canvas.height / 2 - cam.y * scale),
       );
       drawMap(ctx, layers);
-      const target = nearestDoor(map, game.self.x, game.self.y);
+      const target = game.down ? null : nearestDoor(map, game.self.x, game.self.y);
       drawDoors(ctx, map.doors, target);
-      for (const player of players) drawPlayer(ctx, player); // ours is last, so on top
+      // Enemies under players (so a downed player stays visible), downed players
+      // under standing ones, and ours last among those so it's on top.
+      for (const enemy of enemies) drawEnemy(ctx, enemy);
+      for (const player of players) if (player.down) drawPlayer(ctx, player);
+      for (const player of players) if (!player.down) drawPlayer(ctx, player);
+      for (const bullet of game.bulletsAt(now)) drawBullet(ctx, bullet);
 
       // Overlay pass, in CSS pixels.
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const enemy of enemies) {
+        if (enemy.hp >= ENEMY_MAX_HP) continue;
+        const pos = toScreen(enemy.x, enemy.y - ENEMY_RADIUS);
+        drawEnemyHealth(ctx, pos.x, pos.y - 4, enemy.hp);
+      }
       for (const player of players) {
         const pos = toScreen(player.x, player.y - PLAYER_SIZE / 2);
-        drawName(ctx, pos.x, pos.y - 6, player);
+        drawTag(ctx, pos.x, pos.y - 5, player);
       }
       if (target) {
         const pos = toScreen(target.x + target.w / 2, target.y);
         drawPrompt(ctx, pos.x, pos.y - 10, target.open ? 'Close' : 'Open');
       }
-      drawMinimap(ctx, layers.minimap, map, players, cam, viewW, viewH);
+      drawHurt(ctx, viewW, viewH, 1 - (now - game.hurtAt) / HURT_FLASH_MS);
+      drawMinimap(ctx, layers.minimap, map, players, enemies, cam, viewW, viewH);
     },
   };
 }
@@ -210,33 +249,112 @@ function drawDoors(ctx, doors, target) {
   }
 }
 
-function drawPlayer(ctx, { x, y, color, away }) {
+// A colored square; downed players are greyed out and crossed through.
+function drawPlayer(ctx, { x, y, color, away, down }) {
   const half = PLAYER_SIZE / 2;
   const inset = 1.5 / TILE_PX;
   ctx.globalAlpha = away ? AWAY_ALPHA : 1;
-  ctx.fillStyle = color;
+  ctx.fillStyle = down ? COLORS.downed : color;
   ctx.fillRect(x - half, y - half, PLAYER_SIZE, PLAYER_SIZE);
-  ctx.strokeStyle = COLORS.playerEdge;
+  ctx.strokeStyle = down ? color : COLORS.playerEdge;
   ctx.lineWidth = 3 / TILE_PX;
   ctx.strokeRect(x - half + inset, y - half + inset, PLAYER_SIZE - 2 * inset, PLAYER_SIZE - 2 * inset);
+  if (down) {
+    const r = half * 0.55;
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r);
+    ctx.lineTo(x + r, y + r);
+    ctx.moveTo(x + r, y - r);
+    ctx.lineTo(x - r, y + r);
+    ctx.stroke();
+  }
   ctx.globalAlpha = 1;
 }
 
-// Name tag centered above (x, y), which is the top edge of the player.
-function drawName(ctx, x, y, { name, away }) {
-  if (!name) return;
-  const label = away ? `${name} (disconnected)` : name;
+function drawEnemy(ctx, { x, y }) {
+  ctx.beginPath();
+  ctx.arc(x, y, ENEMY_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = COLORS.enemy;
+  ctx.fill();
+  ctx.lineWidth = 3 / TILE_PX;
+  ctx.strokeStyle = COLORS.enemyEdge;
+  ctx.stroke();
+}
+
+// A small yellow point with a short fading trail behind it.
+function drawBullet(ctx, { x, y, dx, dy, flown }) {
+  const trail = Math.min(flown, BULLET_TRAIL);
+  ctx.strokeStyle = COLORS.bulletTrail;
+  ctx.lineWidth = BULLET_RADIUS * 1.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x - dx * trail, y - dy * trail);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+
+  ctx.fillStyle = COLORS.bullet;
+  ctx.beginPath();
+  ctx.arc(x, y, BULLET_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Remaining HP as segments, bottom-centered on (x, y).
+function drawEnemyHealth(ctx, x, y, hp) {
+  const { w, h } = ENEMY_HEALTH_BAR;
+  const left = Math.round(x - w / 2);
+  const top = Math.round(y - h);
+  const segment = w / ENEMY_MAX_HP;
+  ctx.fillStyle = COLORS.hpTrack;
+  ctx.fillRect(left - 1, top - 1, w + 2, h + 2);
+  ctx.fillStyle = COLORS.enemy;
+  for (let i = 0; i < hp; i++) ctx.fillRect(left + i * segment, top, segment - 1, h);
+}
+
+// Health bar with the name above it, stacked upward from (x, y), the top edge
+// of the player. Downed players get a label instead of a bar.
+function drawTag(ctx, x, y, { name, away, down, hp }) {
   ctx.globalAlpha = away ? AWAY_ALPHA * 2 : 1;
-  ctx.font = '600 12px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = COLORS.void;
-  ctx.strokeText(label, x, y);
-  ctx.fillStyle = COLORS.highlight;
-  ctx.fillText(label, x, y);
+
+  let nameY = y;
+  if (!down) {
+    const { w, h } = HEALTH_BAR;
+    const left = Math.round(x - w / 2);
+    const top = Math.round(y - h);
+    const frac = Math.max(0, Math.min(1, hp / PLAYER_MAX_HP));
+    ctx.fillStyle = COLORS.hpTrack;
+    ctx.fillRect(left - 1, top - 1, w + 2, h + 2);
+    ctx.fillStyle = frac > 0.5 ? COLORS.hpHigh : frac > 0.25 ? COLORS.hpMid : COLORS.hpLow;
+    ctx.fillRect(left, top, w * frac, h);
+    nameY = top - 4;
+  }
+
+  const status = [down && 'down', away && 'disconnected'].filter(Boolean).join(', ');
+  const label = status ? `${name} (${status})` : name;
+  if (label) {
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = COLORS.void;
+    ctx.strokeText(label, x, nameY);
+    ctx.fillStyle = COLORS.highlight;
+    ctx.fillText(label, x, nameY);
+  }
   ctx.globalAlpha = 1;
+}
+
+// Red glow around the screen edges after taking damage; `strength` 0..1.
+function drawHurt(ctx, viewW, viewH, strength) {
+  if (strength <= 0) return;
+  const cx = viewW / 2;
+  const cy = viewH / 2;
+  const gradient = ctx.createRadialGradient(cx, cy, Math.min(cx, cy) * 0.6, cx, cy, Math.hypot(cx, cy));
+  gradient.addColorStop(0, `rgba(${COLORS.hurt}, 0)`);
+  gradient.addColorStop(1, `rgba(${COLORS.hurt}, ${0.45 * strength})`);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, viewW, viewH);
 }
 
 // A "[E] Open" hint centered above (x, y).
@@ -270,7 +388,7 @@ function drawPrompt(ctx, x, y, label) {
   ctx.fillText(label, left + 4 + keyW + gap, top + h / 2 + 1);
 }
 
-function drawMinimap(ctx, image, map, players, cam, viewW, viewH) {
+function drawMinimap(ctx, image, map, players, enemies, cam, viewW, viewH) {
   const s = MINIMAP_PX;
   const w = map.width * s;
   const h = map.height * s;
@@ -301,11 +419,14 @@ function drawMinimap(ctx, image, map, players, cam, viewW, viewH) {
   ctx.strokeRect(left + (cam.x - tilesW / 2) * s, top + (cam.y - tilesH / 2) * s, tilesW * s, tilesH * s);
   ctx.restore();
 
-  for (const { x, y, color, away } of players) {
+  ctx.fillStyle = COLORS.enemy;
+  for (const { x, y } of enemies) ctx.fillRect(left + x * s - 1.5, top + y * s - 1.5, 3, 3);
+
+  for (const { x, y, color, away, down } of players) {
     ctx.globalAlpha = away ? AWAY_ALPHA : 1;
     ctx.fillStyle = COLORS.void;
     ctx.fillRect(left + x * s - 3.5, top + y * s - 3.5, 7, 7);
-    ctx.fillStyle = color;
+    ctx.fillStyle = down ? COLORS.downed : color;
     ctx.fillRect(left + x * s - 2.5, top + y * s - 2.5, 5, 5);
   }
   ctx.globalAlpha = 1;

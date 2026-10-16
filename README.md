@@ -13,7 +13,7 @@ npm test         # map generation and movement tests
 
 Then open http://localhost:3000, enter a name and create a game. Share the four-letter code or the invite link (`/?lobby=CODE`); the host starts the game once everyone is in. Client changes only need a browser refresh.
 
-Controls: <kbd>WASD</kbd> or arrow keys to move, <kbd>E</kbd> to open or close a nearby door, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
+Controls: <kbd>WASD</kbd> or arrow keys to move, left click to shoot toward the cursor, <kbd>E</kbd> to open or close a nearby door, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
 
 Players are identified by their session cookie, so:
 
@@ -36,19 +36,22 @@ Environment variables (all optional in development):
 server/
   index.js         Express app, sessions, WebSocket server, message routing
   lobby.js         Lobbies: codes, membership, host, reconnects, starting games
-  game.js          A running match: applies player inputs, broadcasts state
+  game.js          A running match: player inputs, health, bullets, broadcasts state
+  enemies.js       Enemy spawning and behavior (wander, chase on sight, search)
   mapgen.js        Procedural map generation from a seed
   rng.js           Seeded random numbers
 shared/            Imported by both server and browser (served at /shared)
   constants.js     Tick rates, player size and speed, tile and input codes
-  map.js           Map data helpers: solidity, doors
-  physics.js       Player movement and wall collision
+  map.js           Map data helpers: solidity, doors, line of sight
+  physics.js       Movement and wall collision
 public/            Static client (served as-is, no build step)
   js/main.js       Entry point: connection, screen switching, game loop
   js/ui.js         Home, lobby and menu screens
   js/game.js       Client game state, movement prediction, interpolation
   js/render.js     Canvas drawing and minimap
-  js/input.js      Keyboard handling
+  js/input.js      Keyboard and mouse handling
+  js/audio.js      Sound effects (Web Audio)
+  assets/          Sounds and other media
   js/net.js        WebSocket wrapper (JSON messages keyed by `type`)
 test/              node:test suites
 docs/              Planning and design docs
