@@ -153,6 +153,17 @@ export function createUi(actions) {
       $('reactor-extract').disabled = !rodIn;
     },
 
+    // Battery time left, lit while the flashlight is on; "dead" once it's flat.
+    renderFlashlight(battery, on) {
+      const seconds = Math.ceil(battery);
+      const text = seconds > 0 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : 'dead';
+      const el = $('flashlight-text');
+      if (el.textContent === text && el.classList.contains('on') === on) return; // called every frame
+      el.textContent = text;
+      el.classList.toggle('on', on);
+      el.classList.toggle('empty', seconds <= 0);
+    },
+
     renderPower(on) {
       const text = on ? 'on' : 'off';
       if ($('power-text').textContent === text) return; // called every frame

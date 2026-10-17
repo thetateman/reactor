@@ -3,10 +3,11 @@ import {
   TILE,
 } from '/shared/constants.js';
 import { canTake, nearestPickup, pointInRect } from '/shared/interact.js';
-import { isPowered } from '/shared/reactor.js';
+import { canSee, computeScene, paintLight } from './lighting.js';
+import { Minimap } from './minimap.js';
 
 const TILE_PX = 32; // CSS pixels per tile in the main view
-const MINIMAP_PX = 3; // CSS pixels per tile in the minimap
+const FULL_MAP_PX = 3; // CSS pixels per tile in the full map (Shift+M)
 const MARGIN = 16;
 const WALL_EDGE = 0.12; // lit strip along wall faces, in tiles
 const HEALTH_BAR = { w: 30, h: 4 }; // CSS pixels
@@ -18,6 +19,7 @@ const DIAL_RADIUS = 26; // CSS pixels, the dial over the reactor
 
 const COLORS = {
   void: '#07090c',
+  dark: '#020305', // what's neither lit nor in sight
   corridor: '#151a21',
   room: '#1b222c',
   grid: 'rgba(255, 255, 255, 0.04)',
@@ -71,19 +73,25 @@ export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let dpr = 1;
   let layers = null;
+  let minimap = null;
   let view = null; // camera of the last frame drawn, for mapping clicks to the world
+  // Darkness is drawn here first, with the lit parts cut out, then laid over the world.
+  const dark = document.createElement('canvas');
+  const dctx = dark.getContext('2d');
 
   function resize() {
     dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(canvas.clientWidth * dpr);
-    canvas.height = Math.round(canvas.clientHeight * dpr);
+    canvas.width = dark.width = Math.round(canvas.clientWidth * dpr);
+    canvas.height = dark.height = Math.round(canvas.clientHeight * dpr);
   }
   resize();
   window.addEventListener('resize', resize);
 
   return {
-    setMap(map) {
+    // `gameId` identifies the level, so the minimap can restore what we'd explored.
+    setMap(map, gameId) {
       layers = buildLayers(map);
+      minimap = new Minimap(map, gameId);
     },
 
     clear() {
@@ -104,8 +112,10 @@ export function createRenderer(canvas) {
 
     // `roster` maps player id to { name, color, connected } from the lobby.
     // `alpha` blends our own position between movement steps; `now` places
-    // other players and enemies on their interpolation timeline.
-    draw(game, roster, alpha, now, { minimap = true } = {}) {
+    // other players and enemies on their interpolation timeline. `aim` is
+    // where we point our flashlight. `showMinimap` shows our explored map;
+    // `fullMap` instead shows the whole level, for testing.
+    draw(game, roster, alpha, now, { aim = 0, showMinimap = true, fullMap = false } = {}) {
       const { map } = game;
       const self = { id: game.you, ...game.selfAt(alpha), hp: game.hp, down: game.down };
       const players = [...game.othersAt(now), self].map((p) => ({
@@ -127,15 +137,23 @@ export function createRenderer(canvas) {
       });
       view = { cam, w: viewW, h: viewH };
 
+      // What's lit and in sight, looking far enough to reach every screen corner.
+      const others = players.filter((p) => p.id !== game.you);
+      const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) =>
+        Math.hypot(cam.x + (sx * viewW) / TILE_PX / 2 - self.x, cam.y + (sy * viewH) / TILE_PX / 2 - self.y));
+      const scene = computeScene(game, self, aim, others, Math.max(...corners) + 1, (i) => minimap.reveal(i));
+      minimap.visit(self, game.lights);
+
       this.clear();
 
       // World pass, in tile units.
       const scale = TILE_PX * dpr;
-      ctx.setTransform(
+      const world = [
         scale, 0, 0, scale,
         Math.round(canvas.width / 2 - cam.x * scale),
         Math.round(canvas.height / 2 - cam.y * scale),
-      );
+      ];
+      ctx.setTransform(...world);
       drawMap(ctx, layers);
       drawExit(ctx, map.exit, now);
       drawReactor(ctx, map.reactor, game.reactor.temperature, now);
@@ -149,21 +167,49 @@ export function createRenderer(canvas) {
       for (const player of players) if (!player.down) drawPlayer(ctx, player);
       for (const bullet of game.bulletsAt(now)) drawBullet(ctx, bullet);
 
-      // Overlay pass, in CSS pixels.
+      // Darkness over everything that isn't lit and in sight.
+      dctx.setTransform(1, 0, 0, 1, 0, 0);
+      dctx.globalCompositeOperation = 'source-over';
+      dctx.fillStyle = COLORS.dark;
+      dctx.fillRect(0, 0, dark.width, dark.height);
+      dctx.setTransform(...world);
+      dctx.globalCompositeOperation = 'destination-out';
+      paintLight(dctx, scene);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(dark, 0, 0);
+
+      // Sight stops at the reactor's edge like at a wall, which would leave
+      // most of the block in the dark. It glows, so once any side of it is in
+      // sight, draw the whole block (and its dial, below) over the darkness.
+      const { reactor } = map;
+      const sides = [
+        [reactor.x + reactor.w / 2, reactor.y - 0.05], [reactor.x + reactor.w / 2, reactor.y + reactor.h + 0.05],
+        [reactor.x - 0.05, reactor.y + reactor.h / 2], [reactor.x + reactor.w + 0.05, reactor.y + reactor.h / 2],
+      ];
+      const reactorInSight = sides.some(([x, y]) => canSee(scene, x, y));
+      if (reactorInSight) {
+        ctx.setTransform(...world);
+        drawReactor(ctx, reactor, game.reactor.temperature, now, { glow: false });
+      }
+
+      // Overlay pass, in CSS pixels. Health bars only show for what we can
+      // see; teammates' names always show, so we can find each other.
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       for (const enemy of enemies) {
-        if (enemy.hp >= ENEMY_MAX_HP) continue;
+        if (enemy.hp >= ENEMY_MAX_HP || !canSee(scene, enemy.x, enemy.y)) continue;
         const pos = toScreen(enemy.x, enemy.y - ENEMY_RADIUS);
         drawEnemyHealth(ctx, pos.x, pos.y - 4, enemy.hp);
       }
       for (const player of players) {
         const pos = toScreen(player.x, player.y - PLAYER_SIZE / 2);
-        drawTag(ctx, pos.x, pos.y - 5, player);
+        const seen = player.id === game.you || canSee(scene, player.x, player.y);
+        drawTag(ctx, pos.x, pos.y - 5, player, seen);
       }
       // The dial sits on the reactor's face, so it never covers players standing around it.
-      const { reactor } = map;
-      const dialAt = toScreen(reactor.x + reactor.w / 2, reactor.y + reactor.h / 2);
-      drawDial(ctx, dialAt.x, dialAt.y + DIAL_RADIUS * 0.5, DIAL_RADIUS, game.reactor.temperature);
+      if (reactorInSight) {
+        const dialAt = toScreen(reactor.x + reactor.w / 2, reactor.y + reactor.h / 2);
+        drawDial(ctx, dialAt.x, dialAt.y + DIAL_RADIUS * 0.5, DIAL_RADIUS, game.reactor.temperature);
+      }
 
       if (target?.kind === 'reactor') {
         const pos = toScreen(reactor.x + reactor.w / 2, reactor.y + reactor.h);
@@ -188,12 +234,8 @@ export function createRenderer(canvas) {
         else if (!canTake(stack, game.ammoLeft)) drawPrompt(ctx, pos.x, pos.y + 4, null, 'Ammo full', { below: true });
       }
       drawHurt(ctx, viewW, viewH, 1 - (now - game.hurtAt) / HURT_FLASH_MS);
-      // For now the minimap stands in for the control-room terminal, so it needs power.
-      if (minimap && isPowered(game.reactor.temperature)) {
-        drawMinimap(ctx, layers.minimap, map, players, enemies, game.pickups, cam, viewW, viewH);
-      } else if (minimap) {
-        drawMinimapOffline(ctx, viewW);
-      }
+      if (fullMap) drawFullMap(ctx, layers.fullMap, map, players, enemies, game.pickups, cam, viewW, viewH);
+      else if (showMinimap) minimap.draw(ctx, viewW, self, others, now);
     },
   };
 }
@@ -246,12 +288,12 @@ function buildLayers(map) {
     }
   }
 
-  return { floor, roomFloors, grid, walls, wallEdges, minimap: buildMinimap(map) };
+  return { floor, roomFloors, grid, walls, wallEdges, fullMap: buildFullMap(map) };
 }
 
-function buildMinimap({ width, height, tiles, rooms }) {
+function buildFullMap({ width, height, tiles, rooms }) {
   const res = 2; // canvas pixels per minimap pixel, so it stays sharp on hi-dpi screens
-  const px = MINIMAP_PX * res;
+  const px = FULL_MAP_PX * res;
   const canvas = document.createElement('canvas');
   canvas.width = width * px;
   canvas.height = height * px;
@@ -338,11 +380,12 @@ function drawEnemy(ctx, { x, y }) {
   ctx.stroke();
 }
 
-// The reactor: a blue block with a pulsing glow that grows brighter as it heats up.
-function drawReactor(ctx, rect, temperature, now) {
+// The reactor: a blue block with a pulsing glow that grows brighter as it
+// heats up. With `glow` false, just the block.
+function drawReactor(ctx, rect, temperature, now, { glow = true } = {}) {
   const heat = Math.min(1, temperature / 100);
   const pulse = 0.5 + 0.5 * Math.sin(now / 400);
-  for (let i = 5; i >= 1; i--) {
+  for (let i = 5; glow && i >= 1; i--) {
     const pad = i * 0.15;
     ctx.fillStyle = `rgba(${COLORS.reactorGlow}, ${(0.03 + 0.06 * heat) * (0.6 + 0.4 * pulse)})`;
     ctx.fillRect(rect.x - pad, rect.y - pad, rect.w + pad * 2, rect.h + pad * 2);
@@ -470,12 +513,13 @@ function drawEnemyHealth(ctx, x, y, hp) {
 }
 
 // Health bar with the name above it, stacked upward from (x, y), the top edge
-// of the player. Downed players get a label instead of a bar.
-function drawTag(ctx, x, y, { name, away, down, hp }) {
+// of the player. Downed players get a label instead of a bar, and players
+// we can't see (`seen` false) just the name.
+function drawTag(ctx, x, y, { name, away, down, hp }, seen) {
   ctx.globalAlpha = away ? AWAY_ALPHA * 2 : 1;
 
   let nameY = y;
-  if (!down) {
+  if (!down && seen) {
     const { w, h } = HEALTH_BAR;
     const left = Math.round(x - w / 2);
     const top = Math.round(y - h);
@@ -548,24 +592,9 @@ function drawPrompt(ctx, x, y, key, label, { below = false } = {}) {
   ctx.fillText(label, left + 4 + keyW + gap, top + h / 2 + 1);
 }
 
-// Shown where the minimap would be while there's no power.
-function drawMinimapOffline(ctx, viewW) {
-  const label = 'Map offline: no power';
-  ctx.font = '600 12px system-ui, sans-serif';
-  const w = ctx.measureText(label).width + 24;
-  const left = viewW - MARGIN - w;
-  ctx.fillStyle = COLORS.panel;
-  ctx.beginPath();
-  ctx.roundRect(left, MARGIN, w, 28, 8);
-  ctx.fill();
-  ctx.fillStyle = COLORS.dialCold;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, left + w / 2, MARGIN + 14);
-}
-
-function drawMinimap(ctx, image, map, players, enemies, pickups, cam, viewW, viewH) {
-  const s = MINIMAP_PX;
+// The whole level with everything on it (Shift+M), for testing.
+function drawFullMap(ctx, image, map, players, enemies, pickups, cam, viewW, viewH) {
+  const s = FULL_MAP_PX;
   const w = map.width * s;
   const h = map.height * s;
   const left = viewW - w - MARGIN;

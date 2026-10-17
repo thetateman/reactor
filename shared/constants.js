@@ -9,6 +9,7 @@ export const PLAYER_SPEED = 5; // tiles per second
 export const PLAYER_MAX_HP = 10;
 export const PLAYER_MAX_AMMO = 20;
 export const PLAYER_START_AMMO = 0; // players have to find ammo first
+export const FLASHLIGHT_BATTERY = 600; // seconds of light; drains only while it's on
 export const INTERACT_RANGE = 1; // from player center to the nearest edge of a door
 
 export const PICKUP_RANGE = 1.5; // from player center to pickup center
@@ -37,8 +38,9 @@ export const KEY = {
   RIGHT: 8,
   INTERACT: 16,
   SHOOT: 32, // the command also carries `aim`, an angle in radians
+  FLASHLIGHT: 64, // toggle the flashlight
 };
-export const KEY_MASK = 63;
+export const KEY_MASK = 127;
 
 export const TILE = {
   VOID: 0,

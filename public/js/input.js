@@ -15,9 +15,11 @@ const actions = new Map();
 let held = 0;
 let interactPressed = false;
 let shotAim = null; // angle of a click not yet sent, in radians
+let flashlightToggled = false;
 
-// Registers a one-shot handler for a key press (ignores auto-repeat). If the
-// handler returns true, the key's in-game meaning (E: interact) is skipped.
+// Registers a one-shot handler for a key press (ignores auto-repeat). It's
+// called with the keyboard event. If it returns true, the key's in-game
+// meaning (E: interact) is skipped.
 export function onKey(code, handler) {
   actions.set(code, handler);
 }
@@ -27,8 +29,13 @@ export function queueShot(aim) {
   shotAim = aim;
 }
 
-// Input for the next movement step: { keys, aim }. Interact and shots are
-// reported once per press or click.
+// Switches the flashlight on or off on the next movement step.
+export function queueFlashlight() {
+  flashlightToggled = true;
+}
+
+// Input for the next movement step: { keys, aim }. Interact, shots and
+// flashlight toggles are reported once per press or click.
 export function sampleInput() {
   let keys = held;
   let aim;
@@ -40,6 +47,10 @@ export function sampleInput() {
     keys |= KEY.SHOOT;
     aim = shotAim;
     shotAim = null;
+  }
+  if (flashlightToggled) {
+    keys |= KEY.FLASHLIGHT;
+    flashlightToggled = false;
   }
   return { keys, aim };
 }
@@ -56,7 +67,7 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (event.repeat) return;
-  const handled = actions.get(event.code)?.();
+  const handled = actions.get(event.code)?.(event);
   if (event.code === 'KeyE' && !handled) interactPressed = true;
 });
 

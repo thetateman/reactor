@@ -1,9 +1,10 @@
 import {
-  AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, KEY, KEY_MASK, PLAYER_MAX_AMMO, PLAYER_MAX_HP, PLAYER_START_AMMO,
-  REACTOR_COOL_TIME, REACTOR_HEAT_TIME, SIM_STEP, TICK_RATE, TILE,
+  AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, FLASHLIGHT_BATTERY, KEY, KEY_MASK, PLAYER_MAX_AMMO, PLAYER_MAX_HP,
+  PLAYER_START_AMMO, REACTOR_COOL_TIME, REACTOR_HEAT_TIME, SIM_STEP, TICK_RATE, TILE,
 } from '../shared/constants.js';
 import { interactionTarget, nearReactor, pointInRect } from '../shared/interact.js';
 import { castRay, serializeMap } from '../shared/map.js';
+import { isPowered } from '../shared/reactor.js';
 import { bodyOverlapsRect, stepPlayer } from '../shared/physics.js';
 import { Enemies } from './enemies.js';
 import { generateMap } from './mapgen.js';
@@ -35,6 +36,11 @@ const ENEMY_DAMAGE = 1; // HP per second, per enemy touching a player
 // up, and with the rod out it cools (see REACTOR_* in shared/constants.js).
 // At 100 it melts down, killing everyone and ending the level.
 //
+// Each room has a light (`lights[roomId]`), and the hallways share one
+// (`hallLights`); all are on while the reactor makes power.
+// Each player has a flashlight that drains its battery while it's on. Lighting
+// itself is drawn by the clients; the server only tracks what's switched on.
+//
 // The level ends when a player opens the exit hatch (every standing player in
 // the extraction zone escapes) or the reactor melts down. The game then stops
 // and calls `onEnd` with
@@ -51,6 +57,8 @@ export class Game {
     this.bullets = []; // { id, x, y, dx, dy, dist }: current position, unit direction, distance flown
     this.nextBulletId = 1;
     this.reactor = { temperature: 0, rodIn: false };
+    this.lights = this.map.rooms.map(() => false);
+    this.hallLights = false;
 
     const spawns = spawnPoints(this.map, playerIds.length);
     playerIds.forEach((id, i) => {
@@ -61,6 +69,9 @@ export class Game {
         hp: PLAYER_MAX_HP,
         down: false,
         ammo: PLAYER_START_AMMO,
+        flashlight: false,
+        battery: FLASHLIGHT_BATTERY, // seconds left
+        aim: 0, // where they're pointing, in radians, for drawing their flashlight beam
         ...freshInputState(),
       });
     });
@@ -96,11 +107,14 @@ export class Game {
       seed: this.seed,
       you: id,
       ammo: player.ammo,
+      battery: player.battery,
       map: serializeMap(this.map),
       players: this.playerStates(),
       enemies: this.enemies.positions(),
       pickups: this.pickups,
       reactor: this.reactorState(),
+      lights: this.lights,
+      hallLights: this.hallLights,
     });
   }
 
@@ -136,6 +150,7 @@ export class Game {
           stepPlayer(player, keys, this.map);
           if (keys & KEY.INTERACT) this.interact(player);
           if (keys & KEY.SHOOT && aim !== null) this.fire(player, seq, aim);
+          if (keys & KEY.FLASHLIGHT) this.toggleFlashlight(player);
         }
         player.lastSeq = seq;
       }
@@ -152,9 +167,12 @@ export class Game {
     const players = this.playerStates();
     const enemies = this.enemies.positions();
     const reactor = this.reactorState();
+    const { lights, hallLights } = this;
     for (const player of this.players.values()) {
       if (!player.socket) continue;
-      send(player.socket, { type: 'state', ack: player.lastSeq, ammo: player.ammo, players, enemies, reactor });
+      const { lastSeq: ack, ammo } = player;
+      const battery = Math.round(player.battery * 10) / 10;
+      send(player.socket, { type: 'state', ack, ammo, battery, players, enemies, reactor, lights, hallLights });
     }
   }
 
@@ -163,17 +181,21 @@ export class Game {
   simulate(dt) {
     this.updateReactor(dt);
     if (this.result) return;
+    const powered = isPowered(this.reactor.temperature);
+    this.lights.fill(powered);
+    this.hallLights = powered;
 
     const players = [...this.players.values()];
     this.enemies.update(players, dt);
     this.updateBullets(dt);
+    this.drainBatteries(dt);
 
     for (const player of players) {
       if (player.down) continue;
       const touching = this.enemies.touching(player);
       if (!touching) continue;
       player.hp = Math.max(0, player.hp - touching * ENEMY_DAMAGE * dt);
-      if (player.hp === 0) player.down = true;
+      if (player.hp === 0) Object.assign(player, { down: true, flashlight: false });
     }
   }
 
@@ -200,6 +222,24 @@ export class Game {
       time: (performance.now() - this.startedAt) / 1000,
       players: [...this.players.values()].map(({ id }) => ({ id, escaped: false, hp: 0, down: true })),
     };
+  }
+
+  // Right-click: on if there's battery left, off otherwise.
+  toggleFlashlight(player) {
+    player.flashlight = !player.flashlight && player.battery > 0;
+  }
+
+  setAim(id, angle) {
+    const player = this.players.get(id);
+    if (player && Number.isFinite(angle)) player.aim = angle;
+  }
+
+  drainBatteries(dt) {
+    for (const player of this.players.values()) {
+      if (!player.flashlight) continue;
+      player.battery = Math.max(0, player.battery - dt);
+      if (player.battery === 0) player.flashlight = false;
+    }
   }
 
   reactorState() {
@@ -287,12 +327,14 @@ export class Game {
   }
 
   playerStates() {
-    return [...this.players.values()].map(({ id, x, y, hp, down }) => ({
+    return [...this.players.values()].map(({ id, x, y, hp, down, flashlight, aim }) => ({
       id,
       x,
       y,
       hp: Math.ceil(hp * 100) / 100, // rounded up, so only a downed player shows 0
       down,
+      flashlight,
+      aim: Math.round(aim * 100) / 100,
     }));
   }
 }

@@ -200,6 +200,10 @@ export function controlReactor(playerId, action) {
   lobbyOf.get(playerId)?.game?.controlReactor(playerId, action);
 }
 
+export function setAim(playerId, angle) {
+  lobbyOf.get(playerId)?.game?.setAim(playerId, angle);
+}
+
 function cleanName(name) {
   if (typeof name !== 'string') return null;
   return name.replace(/\p{C}/gu, '').trim().slice(0, MAX_NAME_LENGTH) || null;

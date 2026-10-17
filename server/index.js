@@ -101,6 +101,9 @@ wss.on('connection', (ws, req) => {
       case 'reactor':
         lobbies.controlReactor(playerId, msg.action);
         break;
+      case 'aim':
+        lobbies.setAim(playerId, msg.angle);
+        break;
       case 'ping':
         send(ws, { type: 'pong', t: msg.t });
         break;

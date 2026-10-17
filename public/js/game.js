@@ -24,7 +24,7 @@ export class ClientGame {
   // `onTakeAmmo()` is called when we press E at an ammo stack we can take from,
   // and `onUseReactor()` when we press E beside the reactor.
   constructor(
-    { seed, you, ammo, map, players, enemies, pickups, reactor },
+    { seed, you, ammo, battery, map, players, enemies, pickups, reactor, lights, hallLights },
     { onFire, onTakeAmmo, onUseReactor } = {},
   ) {
     this.onFire = onFire ?? (() => {});
@@ -35,13 +35,17 @@ export class ClientGame {
     this.map = deserializeMap(map);
     this.pickups = pickups; // [{ id, kind, x, y }]
     this.reactor = reactor; // { temperature, rodIn }, as of the last server update
+    this.lights = lights; // lights[roomId]: whether that room is lit
+    this.hallLights = hallLights; // whether the hallways are lit
     this.self = { x: 0, y: 0 };
     this.prev = { x: 0, y: 0 };
     this.hp = PLAYER_MAX_HP;
     this.down = false;
     this.ammo = ammo; // as of the last acknowledged input
+    this.battery = battery; // seconds of flashlight left
+    this.flashlightAcked = false; // our flashlight as of the last acknowledged input
     this.hurtAt = -Infinity; // performance.now() of the last HP loss
-    // { time, others: Map<id, { x, y, hp, down }>, enemies: Map<id, { x, y, hp }> }, oldest first
+    // { time, others: Map<id, { x, y, hp, down, flashlight, aim }>, enemies: Map<id, { x, y, hp }> }, oldest first
     this.snapshots = [];
     // { id, seq, x, y, dx, dy, t0, maxDist }: origin, unit direction, fire time
     // and how far it flies. `id` is null until the server confirms our own shots.
@@ -54,6 +58,15 @@ export class ClientGame {
 
   // Our ammo once the server has applied our unacknowledged inputs, in the
   // same order it does: take ammo, then shoot.
+  // Our flashlight with our unacknowledged toggles applied, the way the server will.
+  get flashlightOn() {
+    let on = this.flashlightAcked;
+    for (const input of this.pending) {
+      if (input.keys & KEY.FLASHLIGHT) on = !on && this.battery > 0;
+    }
+    return on && !this.down;
+  }
+
   get ammoLeft() {
     let ammo = this.ammo;
     for (const input of this.pending) {
@@ -89,10 +102,13 @@ export class ClientGame {
     send('input', input);
   }
 
-  applyState({ ack, ammo, players, enemies, reactor }) {
+  applyState({ ack, ammo, battery, players, enemies, reactor, lights, hallLights }) {
     this.pending = this.pending.filter((input) => input.seq > ack);
     this.ammo = ammo;
     this.reactor = reactor;
+    this.lights = lights;
+    this.hallLights = hallLights;
+    this.battery = battery;
     this.applySnapshot(players, enemies);
     // The server stops applying a downed player's movement, so don't replay it.
     if (this.down) this.pending = [];
@@ -142,15 +158,16 @@ export class ClientGame {
   applySnapshot(players, enemies) {
     const now = performance.now();
     const others = new Map();
-    for (const { id, x, y, hp, down } of players) {
+    for (const { id, x, y, hp, down, flashlight, aim } of players) {
       if (id === this.you) {
         this.self.x = x;
         this.self.y = y;
         if (hp < this.hp) this.hurtAt = now;
         this.hp = hp;
         this.down = down;
+        this.flashlightAcked = flashlight;
       } else {
-        others.set(id, { x, y, hp, down });
+        others.set(id, { x, y, hp, down, flashlight, aim });
       }
     }
 

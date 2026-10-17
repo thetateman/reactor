@@ -2,7 +2,7 @@ import { SIM_STEP } from '/shared/constants.js';
 import { isPowered } from '/shared/reactor.js';
 import { playSound } from './audio.js';
 import { ClientGame } from './game.js';
-import { onKey, queueShot, sampleInput } from './input.js';
+import { onKey, queueFlashlight, queueShot, sampleInput } from './input.js';
 import { connect, on, send } from './net.js';
 import { loadPref, savePref } from './prefs.js';
 import { createRenderer } from './render.js';
@@ -14,6 +14,9 @@ const RECONNECT_DELAY = 1000;
 // then fall off with distance, down to a floor so they're always audible.
 const SOUND_FULL_DISTANCE = 6;
 const SOUND_MIN_VOLUME = 0.2;
+// Our aim is sent this often at most, so teammates see where our flashlight points.
+const AIM_SEND_MS = 100;
+const AIM_SEND_CHANGE = 0.03; // radians
 
 const canvas = document.getElementById('view');
 const renderer = createRenderer(canvas);
@@ -42,6 +45,10 @@ let replaced = false;
 let dismissedResults = null; // id of the level results we've already closed
 let showMinimap = loadPref('minimap', 'on') === 'on';
 let reactorOpen = false; // the reactor's controls are showing
+let fullMap = false; // Shift+M: the whole level instead of the minimap, for testing
+let mouse = null; // last cursor position over the game, in client pixels
+let aim = 0; // radians from us toward the cursor
+let aimSent = { angle: null, at: 0 };
 
 on('lobby', ({ lobby: next }) => {
   lobby = next;
@@ -58,7 +65,7 @@ on('game', (msg) => {
   const onTakeAmmo = () => playSound('pickupAmmo');
   const onUseReactor = () => setReactorMenu(true);
   game = new ClientGame(msg, { onFire, onTakeAmmo, onUseReactor });
-  renderer.setMap(game.map);
+  renderer.setMap(game.map, `${lobby?.code}:${msg.seed}`);
   menuOpen = false;
   reactorOpen = false;
   updateScreen();
@@ -112,17 +119,47 @@ onKey('KeyE', () => {
 });
 
 // M: show or hide the minimap (remembered between visits).
-onKey('KeyM', () => {
+// M: show or hide the minimap (remembered between visits). Shift+M: the whole
+// level, for testing until the control-room computer exists.
+onKey('KeyM', (event) => {
+  if (event.shiftKey) {
+    fullMap = !fullMap;
+    return;
+  }
   showMinimap = !showMinimap;
   savePref('minimap', showMinimap ? 'on' : 'off');
 });
 
 // Left click: shoot from our (predicted) position toward the clicked point.
+// Left click: shoot toward the cursor. Right click: flashlight on or off.
 canvas.addEventListener('mousedown', (event) => {
-  if (event.button !== 0 || !game || menuOpen || reactorOpen) return;
-  const target = renderer.screenToWorld(event.clientX, event.clientY);
-  if (target) queueShot(Math.atan2(target.y - game.self.y, target.x - game.self.x));
+  mouse = { x: event.clientX, y: event.clientY };
+  if (!game || menuOpen || reactorOpen) return;
+  if (event.button === 0) {
+    updateAim();
+    queueShot(aim);
+  } else if (event.button === 2) {
+    queueFlashlight();
+  }
 });
+
+canvas.addEventListener('mousemove', (event) => {
+  mouse = { x: event.clientX, y: event.clientY };
+});
+
+// Points `aim` from our (predicted) position at the cursor, and tells the
+// server when it has changed enough.
+function updateAim() {
+  const target = mouse && renderer.screenToWorld(mouse.x, mouse.y);
+  if (!target) return;
+  aim = Math.atan2(target.y - game.self.y, target.x - game.self.x);
+  const now = performance.now();
+  const turned = aimSent.angle === null || Math.abs(Math.atan2(Math.sin(aim - aimSent.angle), Math.cos(aim - aimSent.angle))) > AIM_SEND_CHANGE;
+  if (turned && now - aimSent.at > AIM_SEND_MS) {
+    send('aim', { angle: aim });
+    aimSent = { angle: aim, at: now };
+  }
+}
 
 // Keep the browser's menu from popping up over the game on a stray right click.
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -185,9 +222,11 @@ function frame(now) {
   }
 
   if (game) {
-    renderer.draw(game, roster, acc / SIM_STEP, now, { minimap: showMinimap });
+    updateAim();
+    renderer.draw(game, roster, acc / SIM_STEP, now, { aim, showMinimap, fullMap });
     ui.renderAmmo(game.ammoLeft);
     ui.renderPower(isPowered(game.reactor.temperature));
+    ui.renderFlashlight(game.battery, game.flashlightOn);
     if (reactorOpen) ui.renderReactorMenu(game.reactor);
   } else {
     renderer.clear();

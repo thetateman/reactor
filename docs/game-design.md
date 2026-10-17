@@ -28,8 +28,10 @@ The design goal is **collaboration through different roles**. Players should nee
 | Enemies | One spawns every 5 seconds on average, in a room with no player in it, up to 30 at once. Enemies have 3 HP, chase players they can see, drain 1 HP per second on contact, and can't open doors. |
 | Combat | Left-click fires toward the cursor. Players start with no ammo and carry at most 20 rounds. A bottomless ammo stack sits in the control room. Bullets stop at walls and closed doors. |
 | Interaction | E uses whatever is nearest, in this priority order: the hatch, then the reactor, then ammo, then the nearest door. |
+| Lighting | The level is dark. Rooms and hallways light up while the reactor makes power. Each player has a small circle of light and a flashlight (right-click) with 10 minutes of battery. See "Lighting, flashlights and minimap" below. |
+| Minimap | M toggles a small map that follows the player and shows only what they've explored, plus teammates. |
 | Audio | Gunshots, door open and close, ammo pickup, and looping background music. |
-| Testing aids | M toggles a minimap of the whole level. It only works while the reactor is producing power, standing in for the terminal (see below). |
+| Testing aids | Shift+M shows the whole level, with the exit, enemies and every door, until the control-room computer map exists. |
 
 Level 1 is tuned so a group exploring **without** a map takes about 5 minutes. With the whole map visible it takes under a minute.
 
@@ -91,9 +93,7 @@ The reactor gets built and tuned on its own before anything else. The goal is to
   - The server accepts a button press only from a player within reach who isn't down.
 - **The fuel rod:** one rod, reused forever.
 - **Meltdown:** when the needle reaches the far right, everyone on the map dies instantly. The level ends, and the results screen says **Meltdown**. There's no warning yet; one may come later.
-- **Power stand-ins**, until lights and the terminal exist:
-  - Everyone's HUD shows a power on/off light.
-  - The M minimap only works while there's power. Otherwise it shows "Map offline: no power".
+- **What power does:** it turns on the room lights (see "Lighting, flashlights and minimap"), and everyone's HUD shows a power on/off light. (Until lighting existed, the M minimap stood in, working only with power.)
 - **Control room layout:** players spawn on the ring of tiles touching the reactor. The ammo stack stays at least 3 tiles away, so E at the stack always means "take ammo".
 - **E priority:** hatch, then reactor, then ammo, then door.
 
@@ -127,6 +127,44 @@ What those numbers give:
 - enemies getting into the control room;
 - a warning as the needle nears meltdown, such as an alarm or a red flash.
 
+### Lighting, flashlights and minimap (built 2026-10-17)
+
+These make the reactor matter: without power the level is dark, apart from what each player can light themselves. All of the following is decided and implemented; the numbers are first values, meant for tuning.
+
+**Lighting**
+
+- **Lit rooms** look as they did before lighting existed: fully visible, walls included, **from anywhere on screen, regardless of line of sight** (changed 2026-10-17 after playtesting; it had cast a shadow behind the reactor). Each room has its own light. For now, all of them are on whenever the reactor makes power (30% and up, including the red zone). Later levels may have the operator route power to specific rooms, and the server already tracks lights room by room.
+- **Hallways** (the maze passages) light up with power too, and are just as fully visible as lit rooms (changed 2026-10-17; they were originally always dark). They share one light, separate from the rooms', so they could later be powered on their own or by sector. With everything lit, power reveals all of the level on screen, enemies included, and flashlights matter only while the power is off.
+- **What you see outside lit rooms:** your own light, flashlight beams and glows only show where they're in your line of sight. Walls, closed doors and the reactor block sight.
+- **Personal light:** in the dark, each player sees a small circle around them. It's fully lit within 0.8 tiles and fades out by 2.2.
+- **Glowing objects:**
+  - The **reactor** glows, more brightly as it heats up (a radius of 2.5 tiles cold, up to 4.5 at meltdown). Once any side of it is in sight, the whole block and its dial are shown.
+  - The **exit hatch** glows faintly, within about 1.6 tiles.
+- **Outside your sight** is pitch black. The minimap does the remembering.
+- **Enemies and teammates** in the dark can't be seen.
+  - Teammates' **name tags always show**, so the group can find each other.
+  - Health bars only show for players and enemies you can actually see.
+
+**Flashlights**
+
+- Right-click switches your flashlight on or off. It lights a 60° cone toward the mouse that reaches about 10 tiles and fades toward the end.
+- **Battery:** 10 minutes of use, draining only while on. The HUD shows the time left. A flat battery switches the flashlight off for good, until charging exists.
+- Every flashlight **starts off**, resets each level, and switches off when its owner goes down.
+- **Teammates' beams** are visible wherever you can see them. Each beam is cut off by walls as seen from its owner.
+
+**Minimap**
+
+- Always available, with M to show or hide it. It no longer needs power.
+- It shows a **34×22-tile window** (twice the control room in each direction) centered on you, north up. It takes about the same space on screen as the old one, at 7 px per tile.
+- It shows only **tiles you've seen lit** in your line of sight: floors, walls, the reactor, and doors (without whether they're open). **A room you've been inside is shown in full whenever its light is on**, even if you were only there in the dark. Seeing a lit room from outside doesn't put it on your minimap. It also shows **teammates' positions**; teammates outside the window simply aren't shown.
+- It never shows enemies, the exit hatch or pickups.
+- What you've explored is kept in the browser, so it survives a page refresh mid-level.
+- The full-level map that used to be on M stays available on **Shift+M**, for testing.
+
+**To decide later**
+
+- Hallway floors are a darker color than room floors, so flashlight beams in hallways (with the power off) are subtle. The colors could be brightened if they're hard to read.
+
 ### Ideas for later reactor versions
 
 - Rods burn down over time, so output slowly falls and fresh rods are needed.
@@ -152,8 +190,8 @@ Pick a few, not all:
 
 | System | What it involves | Size |
 |---|---|---|
-| Vision and lighting | Darkness everywhere except lit areas. Room lights are on when the facility is powered. Each player has a sight radius limited by line of sight, plus a flashlight cone aimed with the mouse that drains its battery. Explored areas are remembered. Can all run in the browser. | Large |
-| Maps | **Decided direction (2026-10-16):** two maps. Every player always has a **small minimap** that shows only what fog of war has revealed, whether or not there's power. The control-room **computer** has a much more useful map of the whole level, usable only while the facility has power. It shows rooms, doors and perhaps the exit (open question), and possibly explorer positions and enemies. Both replace today's whole-level M minimap. | Medium |
+| Vision and lighting | Built (see "Lighting, flashlights and minimap"). Possible later additions: routing power to specific rooms, enemies reacting to light. | Done (v1) |
+| Maps | **Decided direction (2026-10-16):** two maps. Every player always has a **small minimap** that shows only what fog of war has revealed, whether or not there's power. The control-room **computer** has a much more useful map of the whole level, usable only while the facility has power. It shows rooms, doors and perhaps the exit (open question), and possibly explorer positions and enemies. The small minimap is built; the computer map is next. | Medium |
 | Reactor | Version 1 is built (see above). Later versions might add rod burn-down, scram and restart, and alarms. | Done (v1) |
 | Items and inventory | Flashlight, walkie-talkie, batteries, fuel rods and ammo. A few inventory slots, item pickups placed around the map, a charging station and a HUD. | Medium–large |
 | Voice chat | A walkie-talkie works as a team-wide radio while it has battery. Without one, players are heard only nearby (the proximity voice planned from the start). Browser-to-browser audio with the existing server connecting the players. | Large |
@@ -161,7 +199,7 @@ Pick a few, not all:
 ## Proposed build order
 
 1. **Reactor version 1: built 2026-10-16, now being playtested and tuned.** The single fuel rod, temperature dial, Insert/Extract menu, power on/off, and meltdown. See "Reactor version 1" above.
-2. **Vision and lighting.** Darkness, room lights tied to power, a flashlight without batteries for now. Replace the whole-level M minimap with the fog-of-war minimap.
+2. **Lighting, flashlights and minimap: built 2026-10-17.** See "Lighting, flashlights and minimap" above.
 3. **Control-room computer map**, working only while the facility has power.
 4. **Items and batteries.** Inventory, flashlight and walkie batteries, the charging station, and fuel rods placed in the maze.
 5. **Operator endgame**, whichever version is chosen.
