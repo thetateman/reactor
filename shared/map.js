@@ -1,9 +1,11 @@
 import { TILE, INTERACT_RANGE } from './constants.js';
 
-// A map is { width, height, tiles, rooms, doors, spawnRoom, doorAt }.
+// A map is { width, height, tiles, rooms, doors, spawnRoom, exit, doorAt }.
 // `tiles` is a flat Uint8Array of TILE values indexed by y * width + x.
+// `rooms` are { id, x, y, w, h } floor rects in tiles.
 // `doors` are { id, x, y, w, h, open } rects in tiles; `doorAt` maps a tile
 // index to the id of the door covering it, or -1.
+// `exit` is { room, hatch, zone }: the hatch and extraction zone rects, in room `room`.
 
 export function indexDoors(map) {
   const doorAt = new Int16Array(map.width * map.height).fill(-1);
@@ -18,8 +20,8 @@ export function indexDoors(map) {
 }
 
 export function serializeMap(map) {
-  const { width, height, rooms, doors, spawnRoom } = map;
-  return { width, height, tiles: Array.from(map.tiles), rooms, doors, spawnRoom };
+  const { width, height, rooms, doors, spawnRoom, exit } = map;
+  return { width, height, tiles: Array.from(map.tiles), rooms, doors, spawnRoom, exit };
 }
 
 export function deserializeMap(data) {

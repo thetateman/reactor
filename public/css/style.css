@@ -189,6 +189,14 @@ button.primary:hover {
   opacity: 0.5;
 }
 
+.players li.left-behind {
+  opacity: 0.6;
+}
+
+.players li.left-behind .tags {
+  color: var(--danger);
+}
+
 .swatch {
   width: 14px;
   height: 14px;

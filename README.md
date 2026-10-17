@@ -13,7 +13,9 @@ npm test         # map generation and movement tests
 
 Then open http://localhost:3000, enter a name and create a game. Share the four-letter code or the invite link (`/?lobby=CODE`); the host starts the game once everyone is in. Client changes only need a browser refresh.
 
-Controls: <kbd>WASD</kbd> or arrow keys to move, left click to shoot toward the cursor, right click a nearby item (such as the ammo stack in the spawn room) to pick it up, <kbd>E</kbd> to open or close a nearby door, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
+Each level is a maze. Everyone starts in the hub in the middle with an empty gun (there's an ammo stack in the hub) and has to find the exit hatch. Opening the hatch ends the level: every standing player in the extraction zone around it escapes, and a results screen shows the time, who escaped (with their HP) and who was left behind.
+
+Controls: <kbd>WASD</kbd> or arrow keys to move, left click to shoot toward the cursor, <kbd>E</kbd> to use what's nearby (open the hatch when standing on it, take ammo, or open/close a door), <kbd>M</kbd> to show or hide the minimap, <kbd>Esc</kbd> for the menu (leave, or end the game for everyone if you're the host).
 
 Players are identified by their session cookie, so:
 
@@ -38,15 +40,17 @@ server/
   lobby.js         Lobbies: codes, membership, host, reconnects, starting games
   game.js          A running match: player inputs, health, bullets, broadcasts state
   enemies.js       Enemy spawning and behavior (wander, chase on sight, search)
-  mapgen.js        Procedural map generation from a seed
+  mapgen.js        Maze generation from a seed: hub, chambers, exit hatch
   rng.js           Seeded random numbers
 shared/            Imported by both server and browser (served at /shared)
   constants.js     Tick rates, player size and speed, tile and input codes
   map.js           Map data helpers: solidity, doors, line of sight
+  interact.js      What E does where you stand (hatch, pickup or door)
   physics.js       Movement and wall collision
 public/            Static client (served as-is, no build step)
   js/main.js       Entry point: connection, screen switching, game loop
-  js/ui.js         Home, lobby and menu screens
+  js/ui.js         Home, lobby, results and menu screens
+  js/prefs.js      Per-browser settings (name, minimap)
   js/game.js       Client game state, movement prediction, interpolation
   js/render.js     Canvas drawing and minimap
   js/input.js      Keyboard and mouse handling

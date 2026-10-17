@@ -1,19 +1,20 @@
 // DOM screens around the game canvas: home (create / join), lobby, in-game
-// HUD and menu, and a full-screen overlay for connection problems.
+// HUD and menu, level results, and a full-screen overlay for connection problems.
 
 import { PLAYER_MAX_AMMO, PLAYER_MAX_HP } from '/shared/constants.js';
+import { loadPref, savePref } from './prefs.js';
 
 const $ = (id) => document.getElementById(id);
-const NAME_KEY = 'reactor.name';
 
 export function createUi(actions) {
   const screens = {
     home: $('screen-home'),
     lobby: $('screen-lobby'),
+    results: $('screen-results'),
     game: $('hud'),
   };
 
-  $('name').value = loadName();
+  $('name').value = loadPref('name', '');
   $('code').value = new URLSearchParams(location.search).get('lobby') ?? '';
 
   // Reads the name field, reporting an error if it's empty.
@@ -24,7 +25,7 @@ export function createUi(actions) {
       $('name').focus();
       return null;
     }
-    saveName(name);
+    savePref('name', name);
     return name;
   }
 
@@ -60,6 +61,7 @@ export function createUi(actions) {
   $('end-game').addEventListener('click', () => actions.endGame());
   $('leave-game').addEventListener('click', () => actions.leave());
   $('overlay-button').addEventListener('click', () => actions.reconnect());
+  $('results-continue').addEventListener('click', () => actions.dismissResults());
 
   function showError(message) {
     $('home-error').textContent = message;
@@ -69,7 +71,7 @@ export function createUi(actions) {
   return {
     showError,
 
-    // screen: 'home' | 'lobby' | 'game'
+    // screen: 'home' | 'lobby' | 'results' | 'game'
     show(screen) {
       for (const [name, el] of Object.entries(screens)) el.hidden = name !== screen;
       if (screen !== 'home') $('home-error').hidden = true;
@@ -93,6 +95,15 @@ export function createUi(actions) {
         : playing ? "A game is in progress. You'll join the next one."
         : isHost ? 'Share the code or link with friends, then start when everyone is in.'
         : 'Waiting for the host to start the game…';
+    },
+
+    // results: { time, players: [{ id, name, color, escaped, hp, down }] }
+    renderResults(results, you) {
+      const minutes = Math.floor(results.time / 60);
+      const seconds = String(Math.floor(results.time % 60)).padStart(2, '0');
+      $('results-time').textContent = `${minutes}:${seconds}`;
+      const escapedFirst = [...results.players].sort((a, b) => b.escaped - a.escaped);
+      $('results-players').replaceChildren(...escapedFirst.map((p) => resultItem(p, you)));
     },
 
     renderHud(lobby, latency) {
@@ -134,6 +145,27 @@ export function createUi(actions) {
   };
 }
 
+function resultItem(player, you) {
+  const li = document.createElement('li');
+  li.classList.toggle('left-behind', !player.escaped);
+
+  const swatch = document.createElement('span');
+  swatch.className = 'swatch';
+  swatch.style.setProperty('--color', player.color);
+
+  const name = document.createElement('span');
+  name.textContent = player.id === you ? `${player.name} (you)` : player.name;
+
+  const outcome = document.createElement('span');
+  outcome.className = 'tags';
+  outcome.textContent = player.escaped
+    ? `Escaped · ${player.hp}/${PLAYER_MAX_HP} HP`
+    : player.down ? 'Left behind (down)' : 'Left behind';
+
+  li.append(swatch, name, outcome);
+  return li;
+}
+
 function playerItem(player, lobby, you) {
   const li = document.createElement('li');
   li.classList.toggle('away', !player.connected);
@@ -170,20 +202,4 @@ async function copyInviteLink() {
   }
   $('copy-link').textContent = 'Copied';
   setTimeout(() => ($('copy-link').textContent = 'Copy link'), 1500);
-}
-
-function loadName() {
-  try {
-    return localStorage.getItem(NAME_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function saveName(name) {
-  try {
-    localStorage.setItem(NAME_KEY, name);
-  } catch {
-    // Storage unavailable (private mode etc.); the name just won't be remembered.
-  }
 }

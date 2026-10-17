@@ -1,6 +1,7 @@
 import {
-  BULLET_RANGE, BULLET_SPEED, KEY, PICKUP_RANGE, PICKUP_SIZE, PLAYER_MAX_AMMO, PLAYER_MAX_HP,
+  AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, KEY, PLAYER_MAX_AMMO, PLAYER_MAX_HP,
 } from '/shared/constants.js';
+import { interactionTarget } from '/shared/interact.js';
 import { castRay, deserializeMap } from '/shared/map.js';
 import { stepPlayer } from '/shared/physics.js';
 import { send } from './net.js';
@@ -20,8 +21,10 @@ const SNAPSHOT_HISTORY = 1000;
 export class ClientGame {
   // `onFire(bullet)` is called whenever a bullet starts, ours or anyone's,
   // with its origin and start time (`t0`, which may be slightly in the future).
-  constructor({ seed, you, ammo, map, players, enemies, pickups }, { onFire } = {}) {
+  // `onTakeAmmo()` is called when we press E at an ammo stack we can take from.
+  constructor({ seed, you, ammo, map, players, enemies, pickups }, { onFire, onTakeAmmo } = {}) {
     this.onFire = onFire ?? (() => {});
+    this.onTakeAmmo = onTakeAmmo ?? (() => {});
     this.seed = seed;
     this.you = you;
     this.map = deserializeMap(map);
@@ -43,50 +46,39 @@ export class ClientGame {
     this.prev = { ...this.self };
   }
 
-  // Shots we've fired that the server hasn't acknowledged yet are already spent.
+  // Our ammo once the server has applied our unacknowledged inputs, in the
+  // same order it does: take ammo, then shoot.
   get ammoLeft() {
-    return this.ammo - this.pending.filter((input) => input.keys & KEY.SHOOT).length;
+    let ammo = this.ammo;
+    for (const input of this.pending) {
+      if (input.tookAmmo) ammo = Math.min(PLAYER_MAX_AMMO, ammo + AMMO_PICKUP);
+      if (input.keys & KEY.SHOOT) ammo--;
+    }
+    return ammo;
   }
 
-  // Runs one fixed movement step with the given key bits, plus `aim` if
-  // shooting and `pickup` (an id) if taking something.
-  step(keys, aim, pickup) {
+  // What pressing E would do right now (see interactionTarget), or null.
+  interactTarget() {
+    return this.down ? null : interactionTarget(this.map, this.pickups, this.self, this.ammoLeft);
+  }
+
+  // Runs one fixed movement step with the given key bits, plus `aim` if shooting.
+  step(keys, aim) {
     this.prev = { ...this.self };
     if (keys & KEY.SHOOT && this.ammoLeft <= 0) keys &= ~KEY.SHOOT;
     if (!keys || this.down) return;
 
     const input = { seq: ++this.seq, keys };
     stepPlayer(this.self, keys, this.map);
+    // The server moves us and then handles E, so check the target from here.
+    const tookAmmo = !!(keys & KEY.INTERACT) && this.interactTarget()?.kind === 'pickup';
+    if (tookAmmo) this.onTakeAmmo();
     if (keys & KEY.SHOOT) {
       input.aim = aim;
       this.addBullet({ seq: input.seq, x: this.self.x, y: this.self.y, dx: Math.cos(aim), dy: Math.sin(aim) }, performance.now());
     }
-    if (keys & KEY.PICKUP) input.pickup = pickup;
-    this.pending.push(input);
+    this.pending.push({ ...input, tookAmmo });
     send('input', input);
-  }
-
-  // The pickup under a map point (such as the cursor), or null.
-  pickupAt(x, y) {
-    const half = PICKUP_SIZE / 2;
-    return this.pickups.find((p) => Math.abs(p.x - x) <= half && Math.abs(p.y - y) <= half) ?? null;
-  }
-
-  // The closest pickup we're near enough to take, or null.
-  nearbyPickup() {
-    if (this.down) return null;
-    const dist = (p) => Math.hypot(p.x - this.self.x, p.y - this.self.y);
-    const near = this.pickups.filter((p) => dist(p) <= PICKUP_RANGE);
-    return near.sort((a, b) => dist(a) - dist(b))[0] ?? null;
-  }
-
-  inReach(item) {
-    return !this.down && Math.hypot(item.x - this.self.x, item.y - this.self.y) <= PICKUP_RANGE;
-  }
-
-  // Whether taking the item would do anything (the server checks this too).
-  canTake(item) {
-    return item.kind === 'ammo' && this.ammoLeft < PLAYER_MAX_AMMO;
   }
 
   applyState({ ack, ammo, players, enemies }) {

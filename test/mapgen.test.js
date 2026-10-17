@@ -66,7 +66,7 @@ test('walkable space is fully enclosed by walls', () => {
 test('doors are straight runs set in a wall, with floor on both sides', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
-    assert.equal(map.rooms.length, 12);
+    assert.ok(map.rooms.length >= 4, `seed ${seed}: only ${map.rooms.length} rooms`); // hub + exit chambers
 
     let doorTiles = 0;
     for (const door of map.doors) {
@@ -90,13 +90,79 @@ test('players spawn in a large room in the middle of the map', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
     const spawn = map.rooms[map.spawnRoom];
-    assert.ok(spawn.w >= 16 && spawn.h >= 12, `seed ${seed}: spawn room is ${spawn.w}x${spawn.h}`);
+    assert.ok(spawn.w >= 17 && spawn.h >= 11, `seed ${seed}: spawn room is ${spawn.w}x${spawn.h}`);
     for (const room of map.rooms) {
       assert.ok(room.w * room.h <= spawn.w * spawn.h, `seed ${seed}: room ${room.id} is bigger than the spawn room`);
     }
     const center = roomCenter(spawn);
-    assert.ok(Math.abs(center.x - map.width / 2) <= map.width * 0.1, `seed ${seed}: spawn room off-center`);
-    assert.ok(Math.abs(center.y - map.height / 2) <= map.height * 0.1, `seed ${seed}: spawn room off-center`);
+    assert.ok(Math.abs(center.x - map.width / 2) <= 2, `seed ${seed}: spawn room off-center`);
+    assert.ok(Math.abs(center.y - map.height / 2) <= 2, `seed ${seed}: spawn room off-center`);
+  }
+});
+
+const inside = (inner, outer) =>
+  inner.x >= outer.x && inner.y >= outer.y &&
+  inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+
+test('the hatch sits in its extraction zone, in a room far from spawn', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    const { room, hatch, zone } = map.exit;
+    assert.notEqual(room, map.spawnRoom);
+    assert.ok(inside(hatch, zone), `seed ${seed}: hatch outside its zone`);
+    assert.ok(inside(zone, map.rooms[room]), `seed ${seed}: zone outside the exit room`);
+
+    // Walk from the middle of the spawn room to the hatch, through doors.
+    const { width, tiles } = map;
+    const start = roomCenter(map.rooms[map.spawnRoom]);
+    const dist = new Map([[Math.floor(start.y) * width + Math.floor(start.x), 0]]);
+    const queue = [...dist.keys()];
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q];
+      for (const j of [i - 1, i + 1, i - width, i + width]) {
+        if (!dist.has(j) && walkable(tiles[j])) {
+          dist.set(j, dist.get(i) + 1);
+          queue.push(j);
+        }
+      }
+    }
+    const route = dist.get(hatch.y * width + hatch.x);
+    assert.ok(route >= 100, `seed ${seed}: hatch only ${route} steps from spawn`);
+  }
+});
+
+test('between the rooms is a maze, with dead ends', () => {
+  for (const seed of SEEDS.slice(0, 50)) {
+    const map = generateMap(seed);
+    const inRoom = (x, y) => map.rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+    let cells = 0;
+    let passage = 0;
+    let deadEnds = 0;
+    // Cells are the 2x2 floor squares at (3cx + 1, 3cy + 1).
+    for (let y = 1; y < map.height - 1; y += 3) {
+      for (let x = 1; x < map.width - 1; x += 3) {
+        cells++;
+        if (inRoom(x, y)) continue;
+        passage++;
+        const ways = [tileAt(map, x, y - 1), tileAt(map, x + 2, y), tileAt(map, x, y + 2), tileAt(map, x - 1, y)]
+          .filter(walkable).length;
+        if (ways === 1) deadEnds++;
+      }
+    }
+    assert.ok(passage >= cells * 0.6, `seed ${seed}: only ${passage} of ${cells} cells are passage`);
+    assert.ok(deadEnds >= 15, `seed ${seed}: only ${deadEnds} dead ends`);
+  }
+});
+
+test('chambers are 3 to 4 cells on a side, and there are 12 of them', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    const chambers = map.rooms.filter((r) => r.id !== map.spawnRoom);
+    assert.equal(chambers.length, 12, `seed ${seed}`);
+    for (const r of chambers) {
+      // A room n cells wide is 3n - 1 tiles inside.
+      assert.ok([8, 11].includes(r.w) && [8, 11].includes(r.h), `seed ${seed}: chamber ${r.id} is ${r.w}x${r.h}`);
+    }
   }
 });
 

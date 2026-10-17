@@ -1,5 +1,5 @@
 import { ENEMY_MAX_HP, ENEMY_RADIUS, PICKUP_SIZE, PLAYER_MAX_HP, PLAYER_SIZE, TILE } from '/shared/constants.js';
-import { nearestDoor } from '/shared/map.js';
+import { canTake, nearestPickup, pointInRect } from '/shared/interact.js';
 
 const TILE_PX = 32; // CSS pixels per tile in the main view
 const MINIMAP_PX = 3; // CSS pixels per tile in the minimap
@@ -33,6 +33,9 @@ const COLORS = {
   hurt: '248, 81, 73', // rgb, for the damage vignette
   bullet: '#ffd33d',
   bulletTrail: 'rgba(255, 211, 61, 0.35)',
+  exit: '#56d364',
+  exitDark: '#1a4d24',
+  exitGlow: '86, 211, 100', // rgb, for the hatch glow and extraction zone
   highlight: '#f0f6fc',
   panel: 'rgba(7, 9, 12, 0.75)',
   miniRoom: '#3a4554',
@@ -90,7 +93,7 @@ export function createRenderer(canvas) {
     // `roster` maps player id to { name, color, connected } from the lobby.
     // `alpha` blends our own position between movement steps; `now` places
     // other players and enemies on their interpolation timeline.
-    draw(game, roster, alpha, now) {
+    draw(game, roster, alpha, now, { minimap = true } = {}) {
       const { map } = game;
       const self = { id: game.you, ...game.selfAt(alpha), hp: game.hp, down: game.down };
       const players = [...game.othersAt(now), self].map((p) => ({
@@ -122,8 +125,9 @@ export function createRenderer(canvas) {
         Math.round(canvas.height / 2 - cam.y * scale),
       );
       drawMap(ctx, layers);
-      const target = game.down ? null : nearestDoor(map, game.self.x, game.self.y);
-      drawDoors(ctx, map.doors, target);
+      drawExit(ctx, map.exit, now);
+      const target = game.interactTarget(); // what E would do
+      drawDoors(ctx, map.doors, target?.kind === 'door' ? target.door : null);
       for (const item of game.pickups) drawPickup(ctx, item);
       // Enemies under players (so a downed player stays visible), downed players
       // under standing ones, and ours last among those so it's on top.
@@ -143,19 +147,27 @@ export function createRenderer(canvas) {
         const pos = toScreen(player.x, player.y - PLAYER_SIZE / 2);
         drawTag(ctx, pos.x, pos.y - 5, player);
       }
-      if (target) {
-        const pos = toScreen(target.x + target.w / 2, target.y);
-        drawPrompt(ctx, pos.x, pos.y - 10, 'E', target.open ? 'Close' : 'Open');
+      if (target?.kind === 'door') {
+        const { door } = target;
+        const pos = toScreen(door.x + door.w / 2, door.y);
+        drawPrompt(ctx, pos.x, pos.y - 10, 'E', door.open ? 'Close' : 'Open');
+      } else if (target?.kind === 'hatch') {
+        // Below the hatch, since the name tag of whoever is on it sits above.
+        const { hatch, zone } = map.exit;
+        const escaping = players.filter((p) => !p.down && pointInRect(p, zone)).length;
+        const pos = toScreen(hatch.x + hatch.w / 2, hatch.y + hatch.h);
+        const label = escaping > 1 ? `Escape with ${escaping} players` : 'Escape';
+        drawPrompt(ctx, pos.x, pos.y + 6, 'E', label, { below: true });
       }
-      // Below the item, since name tags sit above the players standing next to it.
-      const item = game.nearbyPickup();
-      if (item) {
-        const pos = toScreen(item.x, item.y + PICKUP_SIZE / 2);
-        if (game.canTake(item)) drawPrompt(ctx, pos.x, pos.y + 4, 'Right-click', 'Take ammo', { below: true });
-        else drawPrompt(ctx, pos.x, pos.y + 4, null, 'Ammo full', { below: true });
+      // Pickup prompts go below the item too, for players standing next to it.
+      const stack = game.down ? null : nearestPickup(game.pickups, game.self);
+      if (stack) {
+        const pos = toScreen(stack.x, stack.y + PICKUP_SIZE / 2);
+        if (target?.kind === 'pickup') drawPrompt(ctx, pos.x, pos.y + 4, 'E', 'Take ammo', { below: true });
+        else if (!canTake(stack, game.ammoLeft)) drawPrompt(ctx, pos.x, pos.y + 4, null, 'Ammo full', { below: true });
       }
       drawHurt(ctx, viewW, viewH, 1 - (now - game.hurtAt) / HURT_FLASH_MS);
-      drawMinimap(ctx, layers.minimap, map, players, enemies, game.pickups, cam, viewW, viewH);
+      if (minimap) drawMinimap(ctx, layers.minimap, map, players, enemies, game.pickups, cam, viewW, viewH);
     },
   };
 }
@@ -297,6 +309,36 @@ function drawEnemy(ctx, { x, y }) {
   ctx.fill();
   ctx.lineWidth = 3 / TILE_PX;
   ctx.strokeStyle = COLORS.enemyEdge;
+  ctx.stroke();
+}
+
+// The extraction zone as a tinted square with a dashed edge, and the hatch in
+// its middle as a bright panel with a pulsing glow.
+function drawExit(ctx, { hatch, zone }, now) {
+  ctx.fillStyle = `rgba(${COLORS.exitGlow}, 0.06)`;
+  ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
+  ctx.strokeStyle = `rgba(${COLORS.exitGlow}, 0.55)`;
+  ctx.lineWidth = 2 / TILE_PX;
+  ctx.setLineDash([0.4, 0.25]);
+  ctx.strokeRect(zone.x + 0.05, zone.y + 0.05, zone.w - 0.1, zone.h - 0.1);
+  ctx.setLineDash([]);
+
+  const pulse = 0.5 + 0.5 * Math.sin(now / 350);
+  for (let i = 4; i >= 1; i--) {
+    const pad = i * 0.12;
+    ctx.fillStyle = `rgba(${COLORS.exitGlow}, ${0.05 + 0.06 * pulse})`;
+    ctx.fillRect(hatch.x - pad, hatch.y - pad, hatch.w + pad * 2, hatch.h + pad * 2);
+  }
+  ctx.fillStyle = COLORS.exit;
+  ctx.fillRect(hatch.x, hatch.y, hatch.w, hatch.h);
+  // Panel seams, so it reads as a hatch rather than a floor tile.
+  const inset = 0.18;
+  ctx.strokeStyle = COLORS.exitDark;
+  ctx.lineWidth = 3 / TILE_PX;
+  ctx.strokeRect(hatch.x + inset, hatch.y + inset, hatch.w - inset * 2, hatch.h - inset * 2);
+  ctx.beginPath();
+  ctx.moveTo(hatch.x + hatch.w / 2, hatch.y + inset);
+  ctx.lineTo(hatch.x + hatch.w / 2, hatch.y + hatch.h - inset);
   ctx.stroke();
 }
 
@@ -446,6 +488,10 @@ function drawMinimap(ctx, image, map, players, enemies, pickups, cam, viewW, vie
   const tilesH = viewH / TILE_PX;
   ctx.strokeRect(left + (cam.x - tilesW / 2) * s, top + (cam.y - tilesH / 2) * s, tilesW * s, tilesH * s);
   ctx.restore();
+
+  const { hatch } = map.exit;
+  ctx.fillStyle = COLORS.exit;
+  ctx.fillRect(left + hatch.x * s - 1, top + hatch.y * s - 1, hatch.w * s + 2, hatch.h * s + 2);
 
   ctx.fillStyle = COLORS.bullet;
   for (const { x, y } of pickups) ctx.fillRect(left + x * s - 2, top + y * s - 2, 4, 4);

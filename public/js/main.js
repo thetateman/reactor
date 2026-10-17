@@ -1,8 +1,9 @@
 import { SIM_STEP } from '/shared/constants.js';
 import { playSound } from './audio.js';
 import { ClientGame } from './game.js';
-import { onKey, queuePickup, queueShot, sampleInput } from './input.js';
+import { onKey, queueShot, sampleInput } from './input.js';
 import { connect, on, send } from './net.js';
+import { loadPref, savePref } from './prefs.js';
 import { createRenderer } from './render.js';
 import { createUi } from './ui.js';
 
@@ -23,6 +24,10 @@ const ui = createUi({
   endGame: () => send('endGame'),
   resume: () => setMenu(false),
   reconnect: () => start(),
+  dismissResults: () => {
+    dismissedResults = lobby?.results?.id ?? null;
+    updateScreen();
+  },
 });
 
 let you = null;
@@ -32,6 +37,8 @@ let game = null;
 let menuOpen = false;
 let latency = null;
 let replaced = false;
+let dismissedResults = null; // id of the level results we've already closed
+let showMinimap = loadPref('minimap', 'on') === 'on';
 
 on('lobby', ({ lobby: next }) => {
   lobby = next;
@@ -44,7 +51,9 @@ on('lobby', ({ lobby: next }) => {
 on('game', (msg) => {
   // Timed to when each bullet appears on screen.
   const onFire = ({ x, y, t0 }) => playSoundAt('gunshot', x, y, (t0 - performance.now()) / 1000);
-  game = new ClientGame(msg, { onFire });
+  // Only we hear ourselves take ammo; the server makes the same checks, so it will succeed.
+  const onTakeAmmo = () => playSound('pickupAmmo');
+  game = new ClientGame(msg, { onFire, onTakeAmmo });
   renderer.setMap(game.map);
   menuOpen = false;
   updateScreen();
@@ -88,24 +97,20 @@ onKey('Escape', () => {
   if (game) setMenu(!menuOpen);
 });
 
-// Left click: shoot from our (predicted) position toward the clicked point.
-// Right click on a pickup within reach: take it.
-canvas.addEventListener('mousedown', (event) => {
-  if (!game || menuOpen) return;
-  const target = renderer.screenToWorld(event.clientX, event.clientY);
-  if (!target) return;
-  if (event.button === 0) {
-    queueShot(Math.atan2(target.y - game.self.y, target.x - game.self.x));
-  } else if (event.button === 2) {
-    const item = game.pickupAt(target.x, target.y);
-    if (item && game.inReach(item) && game.canTake(item)) {
-      queuePickup(item.id);
-      playSound('pickupAmmo'); // the server makes the same checks, so this will succeed
-    }
-  }
+// M: show or hide the minimap (remembered between visits).
+onKey('KeyM', () => {
+  showMinimap = !showMinimap;
+  savePref('minimap', showMinimap ? 'on' : 'off');
 });
 
-// Right click is for picking things up, not the browser's menu.
+// Left click: shoot from our (predicted) position toward the clicked point.
+canvas.addEventListener('mousedown', (event) => {
+  if (event.button !== 0 || !game || menuOpen) return;
+  const target = renderer.screenToWorld(event.clientX, event.clientY);
+  if (target) queueShot(Math.atan2(target.y - game.self.y, target.x - game.self.x));
+});
+
+// Keep the browser's menu from popping up over the game on a stray right click.
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
 // Plays a sound from a spot on the map, quieter the farther it is from us.
@@ -121,9 +126,11 @@ function setMenu(open) {
 }
 
 function updateScreen() {
-  const screen = !lobby ? 'home' : game ? 'game' : 'lobby';
+  const newResults = lobby?.results && lobby.results.id !== dismissedResults;
+  const screen = !lobby ? 'home' : game ? 'game' : newResults ? 'results' : 'lobby';
   ui.show(screen);
   if (screen === 'lobby') ui.renderLobby(lobby, you);
+  if (screen === 'results') ui.renderResults(lobby.results, you);
   if (screen === 'game') {
     ui.renderHud(lobby, latency);
     ui.renderHealth(game.hp, game.down);
@@ -151,13 +158,13 @@ function frame(now) {
   acc += Math.min((now - last) / 1000, MAX_FRAME_TIME);
   last = now;
   while (acc >= SIM_STEP) {
-    const { keys, aim, pickup } = sampleInput();
-    game?.step(menuOpen ? 0 : keys, aim, pickup);
+    const { keys, aim } = sampleInput();
+    game?.step(menuOpen ? 0 : keys, aim);
     acc -= SIM_STEP;
   }
 
   if (game) {
-    renderer.draw(game, roster, acc / SIM_STEP, now);
+    renderer.draw(game, roster, acc / SIM_STEP, now, { minimap: showMinimap });
     ui.renderAmmo(game.ammoLeft);
   } else {
     renderer.clear();

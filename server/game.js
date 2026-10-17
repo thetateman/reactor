@@ -1,8 +1,9 @@
 import {
-  AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, KEY, KEY_MASK, PICKUP_RANGE, PLAYER_MAX_AMMO, PLAYER_MAX_HP,
+  AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, KEY, KEY_MASK, PLAYER_MAX_AMMO, PLAYER_MAX_HP, PLAYER_START_AMMO,
   SIM_STEP, TICK_RATE,
 } from '../shared/constants.js';
-import { castRay, nearestDoor, roomCenter, serializeMap } from '../shared/map.js';
+import { interactionTarget, pointInRect } from '../shared/interact.js';
+import { castRay, roomCenter, serializeMap } from '../shared/map.js';
 import { bodyOverlapsRect, stepPlayer } from '../shared/physics.js';
 import { Enemies } from './enemies.js';
 import { generateMap } from './mapgen.js';
@@ -29,8 +30,14 @@ const ENEMY_DAMAGE = 1; // HP per second, per enemy touching a player
 //
 // Pickups ({ id, kind, x, y }) are items on the floor. For now there's one
 // ammo stack in the spawn room, and it stays there however often it's used.
+//
+// The level ends when a player opens the exit hatch: every standing player in
+// the extraction zone escapes. The game then stops and calls `onEnd` with
+// { time, players: [{ id, escaped, hp, down }] }, time in seconds.
 export class Game {
-  constructor(seed, playerIds) {
+  constructor(seed, playerIds, { onEnd = () => {} } = {}) {
+    this.onEnd = onEnd;
+    this.result = null;
     this.seed = seed;
     this.map = generateMap(seed);
     this.players = new Map();
@@ -46,7 +53,7 @@ export class Game {
         ...spawns[i],
         hp: PLAYER_MAX_HP,
         down: false,
-        ammo: PLAYER_MAX_AMMO,
+        ammo: PLAYER_START_AMMO,
         ...freshInputState(),
       });
     });
@@ -54,7 +61,8 @@ export class Game {
     const ammo = ammoSpot(this.map, createRng(seed ^ 0x2545f491));
     this.pickups = [{ id: 1, kind: 'ammo', ...ammo }];
 
-    this.lastTick = performance.now();
+    this.startedAt = performance.now();
+    this.lastTick = this.startedAt;
     this.timer = setInterval(() => this.tick(), 1000 / TICK_RATE);
   }
 
@@ -97,17 +105,12 @@ export class Game {
     this.players.delete(id);
   }
 
-  queueInput(id, { seq, keys, aim, pickup }) {
+  queueInput(id, { seq, keys, aim }) {
     const player = this.players.get(id);
     if (!player || !Number.isInteger(seq) || !Number.isInteger(keys)) return;
     if (seq <= player.queuedSeq || player.inputs.length >= MAX_QUEUED_INPUTS) return;
     player.queuedSeq = seq;
-    player.inputs.push({
-      seq,
-      keys: keys & KEY_MASK,
-      aim: Number.isFinite(aim) ? aim : null,
-      pickup: Number.isInteger(pickup) ? pickup : null,
-    });
+    player.inputs.push({ seq, keys: keys & KEY_MASK, aim: Number.isFinite(aim) ? aim : null });
   }
 
   tick() {
@@ -118,22 +121,27 @@ export class Game {
     for (const player of this.players.values()) {
       player.budget = Math.min(player.budget + elapsed, MAX_INPUT_BUDGET);
       while (player.inputs.length && player.budget >= SIM_STEP - 1e-9) {
-        const { seq, keys, aim, pickup } = player.inputs.shift();
+        const { seq, keys, aim } = player.inputs.shift();
         player.budget -= SIM_STEP;
         // Downed players' inputs are still acknowledged, just not applied.
         if (!player.down) {
           stepPlayer(player, keys, this.map);
           if (keys & KEY.INTERACT) this.interact(player);
           if (keys & KEY.SHOOT && aim !== null) this.fire(player, seq, aim);
-          if (keys & KEY.PICKUP && pickup !== null) this.pickUp(player, pickup);
         }
         player.lastSeq = seq;
       }
     }
 
+    if (this.result) {
+      this.stop();
+      this.onEnd(this.result);
+      return;
+    }
+
     this.simulate(1 / TICK_RATE);
 
-    // Ammo is private, so it goes in each player's own message.
+    // Ammo is per player, so it goes in each player's own message.
     const players = this.playerStates();
     const enemies = this.enemies.positions();
     for (const player of this.players.values()) {
@@ -189,22 +197,38 @@ export class Game {
     });
   }
 
-  // Takes pickup `id` if the player is close enough and can use it. An ammo
-  // stack tops the player up and stays where it is.
-  pickUp(player, id) {
-    const item = this.pickups.find((p) => p.id === id);
-    if (!item || Math.hypot(item.x - player.x, item.y - player.y) > PICKUP_RANGE) return;
-    if (item.kind === 'ammo' && player.ammo < PLAYER_MAX_AMMO) {
-      player.ammo = Math.min(PLAYER_MAX_AMMO, player.ammo + AMMO_PICKUP);
-    }
+  // E: escape through the hatch, take ammo or use a door (see interactionTarget).
+  interact(player) {
+    const target = interactionTarget(this.map, this.pickups, player, player.ammo);
+    if (target?.kind === 'hatch') this.extract();
+    else if (target?.kind === 'pickup') this.takeAmmo(player);
+    else if (target?.kind === 'door') this.toggleDoor(target.door);
   }
 
-  interact(player) {
-    const door = nearestDoor(this.map, player.x, player.y);
-    if (!door) return;
+  // The ammo stack tops the player up and stays where it is.
+  takeAmmo(player) {
+    player.ammo = Math.min(PLAYER_MAX_AMMO, player.ammo + AMMO_PICKUP);
+  }
+
+  toggleDoor(door) {
     if (door.open && this.doorBlocked(door)) return;
     door.open = !door.open;
     this.broadcast({ type: 'door', id: door.id, open: door.open });
+  }
+
+  // Ends the level: everyone standing in the extraction zone escapes.
+  extract() {
+    if (this.result) return;
+    const { zone } = this.map.exit;
+    this.result = {
+      time: (performance.now() - this.startedAt) / 1000,
+      players: [...this.players.values()].map(({ id, x, y, hp, down }) => ({
+        id,
+        escaped: !down && pointInRect({ x, y }, zone),
+        hp: Math.ceil(hp),
+        down,
+      })),
+    };
   }
 
   // Whether anyone is standing in the doorway, so it can't be closed.

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ENEMY_MAX_HP, ENEMY_RADIUS, KEY, PLAYER_MAX_HP } from '../shared/constants.js';
+import { ENEMY_MAX_HP, ENEMY_RADIUS, KEY, PLAYER_MAX_AMMO, PLAYER_MAX_HP } from '../shared/constants.js';
 import { isSolid, lineOfSight, roomCenter } from '../shared/map.js';
 import { Game } from '../server/game.js';
 
@@ -154,25 +154,35 @@ function send(game, ...commands) {
 
 const aimAt = (from, to) => Math.atan2(to.y - from.y, to.x - from.x);
 
+test('players start with no ammo, so they cannot shoot', () => {
+  const { game, player } = setup();
+  game.enemies.maybeSpawn = () => {};
+  assert.equal(player.ammo, 0);
+  send(game, { keys: KEY.SHOOT, aim: 0 });
+  assert.equal(game.nextBulletId - 1, 0, 'no bullet was fired');
+});
+
 test('three hits kill an enemy, and each shot uses one round', () => {
   const { game, room, player } = setup();
   game.enemies.maybeSpawn = () => {};
+  player.ammo = PLAYER_MAX_AMMO;
   const enemy = addEnemy(game, room.x + 0.5, room.y + 0.5);
   enemy.wait = Infinity; // stand still
 
   for (let shot = 1; shot <= 3; shot++) {
     send(game, { keys: KEY.SHOOT, aim: aimAt(player, enemy) });
     run(game, 1);
-    assert.equal(player.ammo, 20 - shot);
+    assert.equal(player.ammo, PLAYER_MAX_AMMO - shot);
     assert.equal(enemy.hp, 3 - shot);
   }
   assert.equal(game.enemies.list.length, 0, 'dead enemies are removed');
   assert.equal(game.bullets.length, 0);
 });
 
-test('the gun holds 20 rounds', () => {
+test('a full gun fires 20 rounds', () => {
   const { game, player } = setup();
   game.enemies.maybeSpawn = () => {};
+  player.ammo = PLAYER_MAX_AMMO;
   send(game, ...Array.from({ length: 25 }, () => ({ keys: KEY.SHOOT, aim: 0 })));
   assert.equal(player.ammo, 0);
   run(game, 3);
@@ -184,7 +194,7 @@ test('bullets stop at walls and closed doors', () => {
   const { game, room, player } = setup();
   game.enemies.maybeSpawn = () => {};
   const { door, inside, outside } = doorOfRoom(game.map, room);
-  Object.assign(player, inside);
+  Object.assign(player, inside, { ammo: PLAYER_MAX_AMMO });
   const behindDoor = addEnemy(game, outside.x, outside.y);
   behindDoor.wait = Infinity;
 
@@ -210,8 +220,8 @@ test('bullets stop at walls and closed doors', () => {
 test('downed players cannot shoot', () => {
   const { game, player } = setup();
   game.enemies.maybeSpawn = () => {};
-  player.down = true;
+  Object.assign(player, { down: true, ammo: PLAYER_MAX_AMMO });
   send(game, { keys: KEY.SHOOT, aim: 0 });
-  assert.equal(player.ammo, 20);
+  assert.equal(player.ammo, PLAYER_MAX_AMMO);
   assert.equal(game.bullets.length, 0);
 });

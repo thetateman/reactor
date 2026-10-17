@@ -16,13 +16,16 @@ const COLORS = [
 
 // A group of players who play together. Members persist across games: the host
 // starts a game with everyone connected, and ending it returns all to the lobby.
-// Players who join mid-game wait in the lobby until the next one.
+// Players who join mid-game wait in the lobby until the next one. When a level
+// is completed, its results stay on the lobby until the next game starts.
 class Lobby {
   constructor(code) {
     this.code = code;
     this.hostId = null;
     this.members = new Map(); // id -> { id, name, color, socket, leaveTimer }
     this.game = null;
+    this.results = null; // { id, time, players: [{ id, name, color, escaped, hp, down }] }
+    this.gamesPlayed = 0;
   }
 
   summary() {
@@ -31,6 +34,7 @@ class Lobby {
       hostId: this.hostId,
       phase: this.game ? 'playing' : 'lobby',
       seed: this.game?.seed ?? null,
+      results: this.results,
       players: [...this.members.values()].map(({ id, name, color, socket }) => ({
         id,
         name,
@@ -90,9 +94,24 @@ class Lobby {
 
   startGame(seed) {
     const connected = [...this.members.values()].filter((m) => m.socket);
-    this.game = new Game(seed, connected.map((m) => m.id));
+    this.results = null;
+    this.game = new Game(seed, connected.map((m) => m.id), { onEnd: (result) => this.finishGame(result) });
     this.broadcast();
     for (const member of connected) this.game.connect(member.id, member.socket);
+  }
+
+  // The level was completed (the game has already stopped itself).
+  finishGame(result) {
+    this.game = null;
+    this.results = {
+      id: ++this.gamesPlayed, // lets clients tell new results from ones they've dismissed
+      time: result.time,
+      players: result.players.map((p) => {
+        const member = this.members.get(p.id);
+        return { ...p, name: member?.name ?? 'Unknown', color: member?.color ?? null };
+      }),
+    };
+    this.broadcast();
   }
 
   endGame() {
