@@ -21,14 +21,20 @@ const SNAPSHOT_HISTORY = 1000;
 export class ClientGame {
   // `onFire(bullet)` is called whenever a bullet starts, ours or anyone's,
   // with its origin and start time (`t0`, which may be slightly in the future).
-  // `onTakeAmmo()` is called when we press E at an ammo stack we can take from.
-  constructor({ seed, you, ammo, map, players, enemies, pickups }, { onFire, onTakeAmmo } = {}) {
+  // `onTakeAmmo()` is called when we press E at an ammo stack we can take from,
+  // and `onUseReactor()` when we press E beside the reactor.
+  constructor(
+    { seed, you, ammo, map, players, enemies, pickups, reactor },
+    { onFire, onTakeAmmo, onUseReactor } = {},
+  ) {
     this.onFire = onFire ?? (() => {});
     this.onTakeAmmo = onTakeAmmo ?? (() => {});
+    this.onUseReactor = onUseReactor ?? (() => {});
     this.seed = seed;
     this.you = you;
     this.map = deserializeMap(map);
     this.pickups = pickups; // [{ id, kind, x, y }]
+    this.reactor = reactor; // { temperature, rodIn }, as of the last server update
     this.self = { x: 0, y: 0 };
     this.prev = { x: 0, y: 0 };
     this.hp = PLAYER_MAX_HP;
@@ -71,8 +77,10 @@ export class ClientGame {
     const input = { seq: ++this.seq, keys };
     stepPlayer(this.self, keys, this.map);
     // The server moves us and then handles E, so check the target from here.
-    const tookAmmo = !!(keys & KEY.INTERACT) && this.interactTarget()?.kind === 'pickup';
+    const target = keys & KEY.INTERACT ? this.interactTarget() : null;
+    const tookAmmo = target?.kind === 'pickup';
     if (tookAmmo) this.onTakeAmmo();
+    if (target?.kind === 'reactor') this.onUseReactor();
     if (keys & KEY.SHOOT) {
       input.aim = aim;
       this.addBullet({ seq: input.seq, x: this.self.x, y: this.self.y, dx: Math.cos(aim), dy: Math.sin(aim) }, performance.now());
@@ -81,9 +89,10 @@ export class ClientGame {
     send('input', input);
   }
 
-  applyState({ ack, ammo, players, enemies }) {
+  applyState({ ack, ammo, players, enemies, reactor }) {
     this.pending = this.pending.filter((input) => input.seq > ack);
     this.ammo = ammo;
+    this.reactor = reactor;
     this.applySnapshot(players, enemies);
     // The server stops applying a downed player's movement, so don't replay it.
     if (this.down) this.pending = [];

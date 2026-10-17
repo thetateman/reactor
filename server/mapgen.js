@@ -12,7 +12,8 @@ import { createRng } from './rng.js';
 //      Openings into a room become doors.
 //   3. Open some dead ends into loops ("braiding"), and make sure the hub has
 //      exits on at least two walls.
-//   4. Put the exit hatch, inside its extraction zone, in the outer chamber
+//   4. Put the reactor, a solid block, in the middle of the hub.
+//   5. Put the exit hatch, inside its extraction zone, in the outer chamber
 //      that's the longest walk from spawn.
 
 // Level 1: about five minutes for a group exploring without a map.
@@ -34,6 +35,7 @@ const SPAWN_EXITS = 2; // the hub has doors on at least this many walls
 const OUTER = 0.3; // the exit is at least this far from the middle, as a fraction of the map size
 const HATCH_SIZE = 2; // tiles
 const ZONE_SIZE = 6; // tiles; fits inside the smallest chamber
+const REACTOR_SIZE = 3; // tiles
 
 const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // up, right, down, left
 
@@ -59,6 +61,7 @@ function tryGenerate(rng, level) {
   ensureHubExits(rng, grid, rooms[SPAWN_ROOM]);
 
   const map = buildMap(grid, rooms);
+  placeReactor(map);
   const exit = placeExit(map, rooms, level.minExitRoute);
   if (!exit) return null;
   map.exit = exit;
@@ -230,12 +233,28 @@ function buildMap(grid, rooms) {
   return map;
 }
 
+// A solid square of REACTOR tiles in the middle of the hub.
+function placeReactor(map) {
+  const hub = map.rooms[SPAWN_ROOM];
+  const reactor = {
+    x: hub.x + Math.floor((hub.w - REACTOR_SIZE) / 2),
+    y: hub.y + Math.floor((hub.h - REACTOR_SIZE) / 2),
+    w: REACTOR_SIZE,
+    h: REACTOR_SIZE,
+  };
+  for (let y = reactor.y; y < reactor.y + reactor.h; y++) {
+    for (let x = reactor.x; x < reactor.x + reactor.w; x++) map.tiles[y * map.width + x] = TILE.REACTOR;
+  }
+  map.reactor = reactor;
+}
+
 // Picks the chamber in the outer part of the map that's the longest walk
 // from the hub, and puts the hatch and extraction zone in the middle of it
 // (on whole tiles). Null if even that one is closer than `minRoute`.
 function placeExit(map, cellRooms, minRoute) {
-  const hub = map.rooms[SPAWN_ROOM];
-  const dist = walkingDistances(map, Math.floor(hub.x + hub.w / 2), Math.floor(hub.y + hub.h / 2));
+  // Measured from beside the reactor, where players spawn.
+  const { reactor } = map;
+  const dist = walkingDistances(map, reactor.x - 1, reactor.y + Math.floor(reactor.h / 2));
   const middle = (size, room) => ({
     x: room.x + Math.floor((room.w - size) / 2),
     y: room.y + Math.floor((room.h - size) / 2),
@@ -265,7 +284,8 @@ function walkingDistances({ width, height, tiles }, x, y) {
   for (let q = 0; q < queue.length; q++) {
     const i = queue[q];
     for (const j of [i - 1, i + 1, i - width, i + width]) {
-      if (j < 0 || j >= tiles.length || dist[j] >= 0 || tiles[j] === TILE.WALL) continue;
+      if (j < 0 || j >= tiles.length || dist[j] >= 0) continue;
+      if (tiles[j] !== TILE.FLOOR && tiles[j] !== TILE.DOOR) continue;
       dist[j] = dist[i] + 1;
       queue.push(j);
     }

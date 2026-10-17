@@ -1,4 +1,5 @@
 import { SIM_STEP } from '/shared/constants.js';
+import { isPowered } from '/shared/reactor.js';
 import { playSound } from './audio.js';
 import { ClientGame } from './game.js';
 import { onKey, queueShot, sampleInput } from './input.js';
@@ -24,6 +25,7 @@ const ui = createUi({
   endGame: () => send('endGame'),
   resume: () => setMenu(false),
   reconnect: () => start(),
+  reactor: (action) => send('reactor', { action }),
   dismissResults: () => {
     dismissedResults = lobby?.results?.id ?? null;
     updateScreen();
@@ -39,6 +41,7 @@ let latency = null;
 let replaced = false;
 let dismissedResults = null; // id of the level results we've already closed
 let showMinimap = loadPref('minimap', 'on') === 'on';
+let reactorOpen = false; // the reactor's controls are showing
 
 on('lobby', ({ lobby: next }) => {
   lobby = next;
@@ -53,9 +56,11 @@ on('game', (msg) => {
   const onFire = ({ x, y, t0 }) => playSoundAt('gunshot', x, y, (t0 - performance.now()) / 1000);
   // Only we hear ourselves take ammo; the server makes the same checks, so it will succeed.
   const onTakeAmmo = () => playSound('pickupAmmo');
-  game = new ClientGame(msg, { onFire, onTakeAmmo });
+  const onUseReactor = () => setReactorMenu(true);
+  game = new ClientGame(msg, { onFire, onTakeAmmo, onUseReactor });
   renderer.setMap(game.map);
   menuOpen = false;
+  reactorOpen = false;
   updateScreen();
 });
 
@@ -63,6 +68,7 @@ on('state', (msg) => {
   if (!game) return;
   game.applyState(msg);
   ui.renderHealth(game.hp, game.down);
+  if (game.down && reactorOpen) setReactorMenu(false);
 });
 on('door', (msg) => {
   if (!game) return;
@@ -94,7 +100,15 @@ on('close', () => {
 });
 
 onKey('Escape', () => {
-  if (game) setMenu(!menuOpen);
+  if (reactorOpen) setReactorMenu(false);
+  else if (game) setMenu(!menuOpen);
+});
+
+// E closes the reactor's controls (and isn't sent as an interaction).
+onKey('KeyE', () => {
+  if (!reactorOpen) return false;
+  setReactorMenu(false);
+  return true;
 });
 
 // M: show or hide the minimap (remembered between visits).
@@ -105,7 +119,7 @@ onKey('KeyM', () => {
 
 // Left click: shoot from our (predicted) position toward the clicked point.
 canvas.addEventListener('mousedown', (event) => {
-  if (event.button !== 0 || !game || menuOpen) return;
+  if (event.button !== 0 || !game || menuOpen || reactorOpen) return;
   const target = renderer.screenToWorld(event.clientX, event.clientY);
   if (target) queueShot(Math.atan2(target.y - game.self.y, target.x - game.self.x));
 });
@@ -118,6 +132,12 @@ function playSoundAt(name, x, y, delay = 0) {
   const dist = Math.hypot(x - game.self.x, y - game.self.y);
   const volume = Math.min(1, Math.max(SOUND_MIN_VOLUME, SOUND_FULL_DISTANCE / dist));
   playSound(name, { volume, delay });
+}
+
+// Standing at the reactor with its controls open: the player can't move or shoot.
+function setReactorMenu(open) {
+  reactorOpen = open;
+  ui.setReactorMenu(open);
 }
 
 function setMenu(open) {
@@ -135,6 +155,7 @@ function updateScreen() {
     ui.renderHud(lobby, latency);
     ui.renderHealth(game.hp, game.down);
     ui.setMenu(menuOpen, lobby.hostId === you);
+    ui.setReactorMenu(reactorOpen);
   }
 }
 
@@ -159,13 +180,15 @@ function frame(now) {
   last = now;
   while (acc >= SIM_STEP) {
     const { keys, aim } = sampleInput();
-    game?.step(menuOpen ? 0 : keys, aim);
+    game?.step(menuOpen || reactorOpen ? 0 : keys, aim);
     acc -= SIM_STEP;
   }
 
   if (game) {
     renderer.draw(game, roster, acc / SIM_STEP, now, { minimap: showMinimap });
     ui.renderAmmo(game.ammoLeft);
+    ui.renderPower(isPowered(game.reactor.temperature));
+    if (reactorOpen) ui.renderReactorMenu(game.reactor);
   } else {
     renderer.clear();
   }

@@ -1,18 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ENEMY_MAX_HP, ENEMY_RADIUS, KEY, PLAYER_MAX_AMMO, PLAYER_MAX_HP } from '../shared/constants.js';
-import { isSolid, lineOfSight, roomCenter } from '../shared/map.js';
+import { isSolid, lineOfSight } from '../shared/map.js';
 import { Game } from '../server/game.js';
 
 const TICK = 0.05;
 
-// A stopped game (no timer) with one player, `p`, in the middle of the spawn room.
+// A floor spot in the spawn room, just left of the reactor in its middle (the room's center is the reactor).
+const besideReactor = ({ reactor }) => ({ x: reactor.x - 0.5, y: reactor.y + reactor.h / 2 });
+
+// A stopped game (no timer) with one player, `p`, in the spawn room beside the reactor.
 function setup(seed = 11) {
   const game = new Game(seed, ['p']);
   game.stop();
   const room = game.map.rooms[game.map.spawnRoom];
   const player = game.players.get('p');
-  Object.assign(player, roomCenter(room));
+  Object.assign(player, besideReactor(game.map));
   return { game, room, player };
 }
 
@@ -51,7 +54,7 @@ function doorOfRoom(map, room) {
 test('line of sight is blocked by walls and closed doors only', () => {
   const { game, room } = setup();
   const { map } = game;
-  assert.ok(lineOfSight(map, room.x + 0.5, room.y + 0.5, room.x + room.w - 0.5, room.y + room.h - 0.5));
+  assert.ok(lineOfSight(map, room.x + 0.5, room.y + 0.5, room.x + room.w - 0.5, room.y + 0.5));
   assert.ok(!lineOfSight(map, room.x + 0.5, room.y + 0.5, room.x + 0.5, room.y - 1.5));
 
   const { door, inside, outside } = doorOfRoom(map, room);
@@ -207,10 +210,12 @@ test('bullets stop at walls and closed doors', () => {
   run(game, 1);
   assert.equal(behindDoor.hp, 2, 'open door let it through');
 
-  // Straight at a solid wall: the bullet ends at the wall, short of its range.
+  // Straight up at the room's top edge (a wall, or that door closed again):
+  // the bullet ends there, short of its range.
+  door.open = false;
   const ends = [];
   player.socket = { readyState: 1, send: (d) => ends.push(JSON.parse(d)) };
-  Object.assign(player, roomCenter(room));
+  Object.assign(player, besideReactor(game.map));
   send(game, { keys: KEY.SHOOT, aim: -Math.PI / 2 });
   run(game, 2);
   const end = ends.find((m) => m.type === 'bulletEnd');

@@ -1,10 +1,11 @@
 import { TILE, INTERACT_RANGE } from './constants.js';
 
-// A map is { width, height, tiles, rooms, doors, spawnRoom, exit, doorAt }.
+// A map is { width, height, tiles, rooms, doors, spawnRoom, reactor, exit, doorAt }.
 // `tiles` is a flat Uint8Array of TILE values indexed by y * width + x.
 // `rooms` are { id, x, y, w, h } floor rects in tiles.
 // `doors` are { id, x, y, w, h, open } rects in tiles; `doorAt` maps a tile
 // index to the id of the door covering it, or -1.
+// `reactor` is the { x, y, w, h } rect of REACTOR tiles in the middle of the spawn room.
 // `exit` is { room, hatch, zone }: the hatch and extraction zone rects, in room `room`.
 
 export function indexDoors(map) {
@@ -20,8 +21,8 @@ export function indexDoors(map) {
 }
 
 export function serializeMap(map) {
-  const { width, height, rooms, doors, spawnRoom, exit } = map;
-  return { width, height, tiles: Array.from(map.tiles), rooms, doors, spawnRoom, exit };
+  const { width, height, rooms, doors, spawnRoom, reactor, exit } = map;
+  return { width, height, tiles: Array.from(map.tiles), rooms, doors, spawnRoom, reactor, exit };
 }
 
 export function deserializeMap(data) {
@@ -84,14 +85,19 @@ export function lineOfSight(map, x0, y0, x1, y1) {
   return castRay(map, x0, y0, (x1 - x0) / len, (y1 - y0) / len, len) >= len;
 }
 
+// Distance from a point to the nearest edge of a rect (0 if it's inside).
+export function distanceToRect(x, y, rect) {
+  const dx = Math.max(rect.x - x, 0, x - (rect.x + rect.w));
+  const dy = Math.max(rect.y - y, 0, y - (rect.y + rect.h));
+  return Math.hypot(dx, dy);
+}
+
 // The closest door whose rect is within reach of the point, or null.
 export function nearestDoor(map, x, y, range = INTERACT_RANGE) {
   let best = null;
   let bestDist = range;
   for (const door of map.doors) {
-    const dx = Math.max(door.x - x, 0, x - (door.x + door.w));
-    const dy = Math.max(door.y - y, 0, y - (door.y + door.h));
-    const dist = Math.hypot(dx, dy);
+    const dist = distanceToRect(x, y, door);
     if (dist <= bestDist) {
       best = door;
       bestDist = dist;

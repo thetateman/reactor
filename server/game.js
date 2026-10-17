@@ -1,9 +1,9 @@
 import {
   AMMO_PICKUP, BULLET_RANGE, BULLET_SPEED, KEY, KEY_MASK, PLAYER_MAX_AMMO, PLAYER_MAX_HP, PLAYER_START_AMMO,
-  SIM_STEP, TICK_RATE,
+  REACTOR_COOL_TIME, REACTOR_HEAT_TIME, SIM_STEP, TICK_RATE, TILE,
 } from '../shared/constants.js';
-import { interactionTarget, pointInRect } from '../shared/interact.js';
-import { castRay, roomCenter, serializeMap } from '../shared/map.js';
+import { interactionTarget, nearReactor, pointInRect } from '../shared/interact.js';
+import { castRay, serializeMap } from '../shared/map.js';
 import { bodyOverlapsRect, stepPlayer } from '../shared/physics.js';
 import { Enemies } from './enemies.js';
 import { generateMap } from './mapgen.js';
@@ -31,9 +31,15 @@ const ENEMY_DAMAGE = 1; // HP per second, per enemy touching a player
 // Pickups ({ id, kind, x, y }) are items on the floor. For now there's one
 // ammo stack in the spawn room, and it stays there however often it's used.
 //
-// The level ends when a player opens the exit hatch: every standing player in
-// the extraction zone escapes. The game then stops and calls `onEnd` with
-// { time, players: [{ id, escaped, hp, down }] }, time in seconds.
+// The reactor in the spawn room starts cold. With its fuel rod in it heats
+// up, and with the rod out it cools (see REACTOR_* in shared/constants.js).
+// At 100 it melts down, killing everyone and ending the level.
+//
+// The level ends when a player opens the exit hatch (every standing player in
+// the extraction zone escapes) or the reactor melts down. The game then stops
+// and calls `onEnd` with
+// { outcome: 'escaped' | 'meltdown', time, players: [{ id, escaped, hp, down }] },
+// time in seconds.
 export class Game {
   constructor(seed, playerIds, { onEnd = () => {} } = {}) {
     this.onEnd = onEnd;
@@ -44,6 +50,7 @@ export class Game {
     this.enemies = new Enemies(this.map, createRng(seed ^ 0x5bd1e995));
     this.bullets = []; // { id, x, y, dx, dy, dist }: current position, unit direction, distance flown
     this.nextBulletId = 1;
+    this.reactor = { temperature: 0, rodIn: false };
 
     const spawns = spawnPoints(this.map, playerIds.length);
     playerIds.forEach((id, i) => {
@@ -93,6 +100,7 @@ export class Game {
       players: this.playerStates(),
       enemies: this.enemies.positions(),
       pickups: this.pickups,
+      reactor: this.reactorState(),
     });
   }
 
@@ -133,25 +141,29 @@ export class Game {
       }
     }
 
+    if (!this.result) this.simulate(1 / TICK_RATE);
     if (this.result) {
       this.stop();
       this.onEnd(this.result);
       return;
     }
 
-    this.simulate(1 / TICK_RATE);
-
     // Ammo is per player, so it goes in each player's own message.
     const players = this.playerStates();
     const enemies = this.enemies.positions();
+    const reactor = this.reactorState();
     for (const player of this.players.values()) {
       if (!player.socket) continue;
-      send(player.socket, { type: 'state', ack: player.lastSeq, ammo: player.ammo, players, enemies });
+      send(player.socket, { type: 'state', ack: player.lastSeq, ammo: player.ammo, players, enemies, reactor });
     }
   }
 
-  // Advances everything that isn't driven by player input: enemies, bullets and damage.
+  // Advances everything that isn't driven by player input: the reactor,
+  // enemies, bullets and damage.
   simulate(dt) {
+    this.updateReactor(dt);
+    if (this.result) return;
+
     const players = [...this.players.values()];
     this.enemies.update(players, dt);
     this.updateBullets(dt);
@@ -163,6 +175,36 @@ export class Game {
       player.hp = Math.max(0, player.hp - touching * ENEMY_DAMAGE * dt);
       if (player.hp === 0) player.down = true;
     }
+  }
+
+  updateReactor(dt) {
+    const reactor = this.reactor;
+    const change = reactor.rodIn ? (100 / REACTOR_HEAT_TIME) * dt : -(100 / REACTOR_COOL_TIME) * dt;
+    reactor.temperature = Math.min(100, Math.max(0, reactor.temperature + change));
+    if (reactor.temperature >= 100) this.meltDown();
+  }
+
+  // The reactor's Insert and Extract buttons. Only someone standing next to it can use them.
+  controlReactor(id, action) {
+    const player = this.players.get(id);
+    if (!player || player.down || !nearReactor(this.map, player)) return;
+    if (action === 'insert') this.reactor.rodIn = true;
+    else if (action === 'extract') this.reactor.rodIn = false;
+  }
+
+  // Everyone on the map dies.
+  meltDown() {
+    if (this.result) return;
+    this.result = {
+      outcome: 'meltdown',
+      time: (performance.now() - this.startedAt) / 1000,
+      players: [...this.players.values()].map(({ id }) => ({ id, escaped: false, hp: 0, down: true })),
+    };
+  }
+
+  reactorState() {
+    const { temperature, rodIn } = this.reactor;
+    return { temperature: Math.round(temperature * 100) / 100, rodIn };
   }
 
   // Fires from the player's center at angle `aim`, if they have ammo.
@@ -198,6 +240,7 @@ export class Game {
   }
 
   // E: escape through the hatch, take ammo or use a door (see interactionTarget).
+  // At the reactor, E opens its controls on the client; nothing happens here.
   interact(player) {
     const target = interactionTarget(this.map, this.pickups, player, player.ammo);
     if (target?.kind === 'hatch') this.extract();
@@ -221,6 +264,7 @@ export class Game {
     if (this.result) return;
     const { zone } = this.map.exit;
     this.result = {
+      outcome: 'escaped',
       time: (performance.now() - this.startedAt) / 1000,
       players: [...this.players.values()].map(({ id, x, y, hp, down }) => ({
         id,
@@ -257,33 +301,44 @@ function freshInputState() {
   return { inputs: [], lastSeq: 0, queuedSeq: 0, budget: 0 };
 }
 
-// Tile centers in the spawn room, nearest its middle first, one per player.
+// How far a spot is from the reactor's edge, counting diagonals as one step
+// (so tiles touching the reactor, corners included, are 0.5 away).
+function reactorClearance(map, spot) {
+  const { reactor } = map;
+  return Math.max(
+    Math.abs(spot.x - (reactor.x + reactor.w / 2)) - reactor.w / 2,
+    Math.abs(spot.y - (reactor.y + reactor.h / 2)) - reactor.h / 2,
+  );
+}
+
+// Floor tile centers in the spawn room, nearest the reactor first, one per
+// player. A full lobby fits in the ring of tiles right around the reactor.
 function spawnPoints(map, count) {
   const room = map.rooms[map.spawnRoom];
-  const center = roomCenter(room);
   const points = [];
   for (let y = room.y; y < room.y + room.h; y++) {
-    for (let x = room.x; x < room.x + room.w; x++) points.push({ x: x + 0.5, y: y + 0.5 });
+    for (let x = room.x; x < room.x + room.w; x++) {
+      if (map.tiles[y * map.width + x] === TILE.FLOOR) points.push({ x: x + 0.5, y: y + 0.5 });
+    }
   }
-  const dist = (p) => Math.hypot(p.x - center.x, p.y - center.y);
+  const dist = (p) => Math.hypot(p.x - (map.reactor.x + map.reactor.w / 2), p.y - (map.reactor.y + map.reactor.h / 2));
   points.sort((a, b) => dist(a) - dist(b));
   return points.slice(0, count);
 }
 
-// Players spawn on the tiles nearest the room's middle (all within this
-// distance even for a full lobby), so the ammo stack is placed farther out.
-const SPAWN_CLUSTER_RADIUS = 2.5;
+// Keeps the ammo stack clear of the spawn ring and out of reach of the
+// reactor's controls, so E there always means "take ammo".
+const AMMO_REACTOR_CLEARANCE = 3;
 
-// A random tile center in the spawn room, clear of the spawn cluster and not
+// A random tile center in the spawn room, away from the reactor and not
 // against a wall.
 function ammoSpot(map, rng) {
   const room = map.rooms[map.spawnRoom];
-  const center = roomCenter(room);
   const spots = [];
   for (let y = room.y + 1; y < room.y + room.h - 1; y++) {
     for (let x = room.x + 1; x < room.x + room.w - 1; x++) {
       const spot = { x: x + 0.5, y: y + 0.5 };
-      if (Math.hypot(spot.x - center.x, spot.y - center.y) >= SPAWN_CLUSTER_RADIUS) spots.push(spot);
+      if (reactorClearance(map, spot) >= AMMO_REACTOR_CLEARANCE) spots.push(spot);
     }
   }
   return rng.pick(spots);

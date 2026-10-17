@@ -21,6 +21,14 @@ export const ENEMY_MAX_HP = 3;
 export const BULLET_SPEED = 30; // tiles per second
 export const BULLET_RANGE = 25; // tiles
 
+// The reactor's temperature runs from 0 (cold) to 100 (meltdown), shown on a
+// dial: blue below POWER_MIN, green up to OVERHEAT_MIN, red above.
+export const REACTOR_HEAT_TIME = 240; // seconds from 0 to 100 with the rod in
+export const REACTOR_COOL_TIME = 240; // seconds from 100 to 0 with the rod out
+export const REACTOR_POWER_MIN = 30; // the facility has power at or above this
+export const REACTOR_OVERHEAT_MIN = 70;
+export const REACTOR_RANGE = 1; // from player center to the reactor's edge, to use it
+
 // Bit flags packed into each input command.
 export const KEY = {
   UP: 1,
@@ -37,4 +45,5 @@ export const TILE = {
   FLOOR: 1,
   WALL: 2,
   DOOR: 3,
+  REACTOR: 4, // solid, drawn separately
 };

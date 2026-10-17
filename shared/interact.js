@@ -1,14 +1,16 @@
-import { PICKUP_RANGE, PLAYER_MAX_AMMO } from './constants.js';
-import { nearestDoor } from './map.js';
+import { PICKUP_RANGE, PLAYER_MAX_AMMO, REACTOR_RANGE } from './constants.js';
+import { distanceToRect, nearestDoor } from './map.js';
 
 // What pressing E does for a player at `body` ({ x, y }) carrying `ammo`
 // rounds, in order of priority:
 //   { kind: 'hatch' }         standing on the exit hatch: escape
+//   { kind: 'reactor' }       next to the reactor: open its controls
 //   { kind: 'pickup', item }  an item in reach that they can use
 //   { kind: 'door', door }    the nearest door in reach: open or close it
 // or null. Shared so the prompt the client shows matches what the server does.
 export function interactionTarget(map, pickups, body, ammo) {
   if (map.exit && pointInRect(body, map.exit.hatch)) return { kind: 'hatch' };
+  if (map.reactor && nearReactor(map, body)) return { kind: 'reactor' };
   const item = nearestPickup(pickups, body);
   if (item && canTake(item, ammo)) return { kind: 'pickup', item };
   const door = nearestDoor(map, body.x, body.y);
@@ -27,6 +29,10 @@ export function nearestPickup(pickups, body) {
     }
   }
   return best;
+}
+
+export function nearReactor(map, body) {
+  return distanceToRect(body.x, body.y, map.reactor) <= REACTOR_RANGE;
 }
 
 export function canTake(item, ammo) {

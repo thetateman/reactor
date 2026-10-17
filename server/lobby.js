@@ -24,7 +24,7 @@ class Lobby {
     this.hostId = null;
     this.members = new Map(); // id -> { id, name, color, socket, leaveTimer }
     this.game = null;
-    this.results = null; // { id, time, players: [{ id, name, color, escaped, hp, down }] }
+    this.results = null; // { id, outcome, time, players: [{ id, name, color, escaped, hp, down }] }
     this.gamesPlayed = 0;
   }
 
@@ -105,6 +105,7 @@ class Lobby {
     this.game = null;
     this.results = {
       id: ++this.gamesPlayed, // lets clients tell new results from ones they've dismissed
+      outcome: result.outcome,
       time: result.time,
       players: result.players.map((p) => {
         const member = this.members.get(p.id);
@@ -193,6 +194,10 @@ export function endGame(playerId) {
 
 export function queueInput(playerId, msg) {
   lobbyOf.get(playerId)?.game?.queueInput(playerId, msg);
+}
+
+export function controlReactor(playerId, action) {
+  lobbyOf.get(playerId)?.game?.controlReactor(playerId, action);
 }
 
 function cleanName(name) {

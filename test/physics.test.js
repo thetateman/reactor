@@ -1,12 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { KEY, PLAYER_SIZE, PLAYER_SPEED, SIM_STEP } from '../shared/constants.js';
-import { isSolid, roomCenter } from '../shared/map.js';
+import { isSolid } from '../shared/map.js';
 import { stepPlayer } from '../shared/physics.js';
 import { generateMap } from '../server/mapgen.js';
 import { createRng } from '../server/rng.js';
 
 const HALF = PLAYER_SIZE / 2;
+
+// A floor spot in the spawn room, just left of the reactor in its middle (the room's center is the reactor).
+const besideReactor = ({ reactor }) => ({ x: reactor.x - 0.5, y: reactor.y + reactor.h / 2 });
 
 function overlapsSolid(map, body) {
   const eps = 1e-6;
@@ -23,7 +26,7 @@ test('random walks never end up inside a wall or closed door', () => {
   for (let seed = 1; seed <= 40; seed++) {
     const map = generateMap(seed);
     for (const door of map.doors) door.open = rng.next() < 0.5;
-    const body = roomCenter(map.rooms[map.spawnRoom]);
+    const body = besideReactor(map);
 
     let keys = 0;
     for (let step = 0; step < 5000; step++) {
@@ -36,7 +39,7 @@ test('random walks never end up inside a wall or closed door', () => {
 
 test('walking into a wall stops flush against it', () => {
   const map = generateMap(5);
-  const body = roomCenter(map.rooms[map.spawnRoom]);
+  const body = besideReactor(map);
   for (let i = 0; i < 1000; i++) stepPlayer(body, KEY.UP, map);
   const wallRow = Math.floor(body.y - HALF) - 1;
   assert.ok(isSolid(map, Math.floor(body.x), wallRow));
@@ -45,7 +48,7 @@ test('walking into a wall stops flush against it', () => {
 
 test('diagonal movement is no faster than straight movement', () => {
   const map = generateMap(5);
-  const body = roomCenter(map.rooms[map.spawnRoom]);
+  const body = besideReactor(map);
   const start = { ...body };
   stepPlayer(body, KEY.DOWN | KEY.RIGHT, map);
   const moved = Math.hypot(body.x - start.x, body.y - start.y);

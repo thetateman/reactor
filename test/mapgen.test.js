@@ -8,6 +8,9 @@ const SEEDS = Array.from({ length: 300 }, (_, i) => i * 7919 + 1);
 
 const walkable = (tile) => tile === TILE.FLOOR || tile === TILE.DOOR;
 
+// A floor spot in the spawn room, just left of the reactor in its middle (the room's center is the reactor).
+const besideReactor = ({ reactor }) => ({ x: reactor.x - 0.5, y: reactor.y + reactor.h / 2 });
+
 test('same seed produces the same map', () => {
   const a = generateMap(1234);
   const b = generateMap(1234);
@@ -20,7 +23,7 @@ test('every walkable tile is reachable from spawn, with doors open', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
     const { width, tiles } = map;
-    const spawn = roomCenter(map.rooms[map.spawnRoom]);
+    const spawn = besideReactor(map);
     const start = Math.floor(spawn.y) * width + Math.floor(spawn.x);
     assert.equal(tiles[start], TILE.FLOOR, `seed ${seed}: spawn is not on floor`);
 
@@ -114,7 +117,7 @@ test('the hatch sits in its extraction zone, in a room far from spawn', () => {
 
     // Walk from the middle of the spawn room to the hatch, through doors.
     const { width, tiles } = map;
-    const start = roomCenter(map.rooms[map.spawnRoom]);
+    const start = besideReactor(map);
     const dist = new Map([[Math.floor(start.y) * width + Math.floor(start.x), 0]]);
     const queue = [...dist.keys()];
     for (let q = 0; q < queue.length; q++) {

@@ -1,5 +1,9 @@
-import { ENEMY_MAX_HP, ENEMY_RADIUS, PICKUP_SIZE, PLAYER_MAX_HP, PLAYER_SIZE, TILE } from '/shared/constants.js';
+import {
+  ENEMY_MAX_HP, ENEMY_RADIUS, PICKUP_SIZE, PLAYER_MAX_HP, PLAYER_SIZE, REACTOR_OVERHEAT_MIN, REACTOR_POWER_MIN,
+  TILE,
+} from '/shared/constants.js';
 import { canTake, nearestPickup, pointInRect } from '/shared/interact.js';
+import { isPowered } from '/shared/reactor.js';
 
 const TILE_PX = 32; // CSS pixels per tile in the main view
 const MINIMAP_PX = 3; // CSS pixels per tile in the minimap
@@ -10,6 +14,7 @@ const ENEMY_HEALTH_BAR = { w: 20, h: 3 };
 const HURT_FLASH_MS = 300;
 const BULLET_RADIUS = 0.08; // tiles
 const BULLET_TRAIL = 0.6; // tiles
+const DIAL_RADIUS = 26; // CSS pixels, the dial over the reactor
 
 const COLORS = {
   void: '#07090c',
@@ -36,6 +41,13 @@ const COLORS = {
   exit: '#56d364',
   exitDark: '#1a4d24',
   exitGlow: '86, 211, 100', // rgb, for the hatch glow and extraction zone
+  reactor: '#1f6feb',
+  reactorCore: '#79c0ff',
+  reactorEdge: '#0d2d6b',
+  reactorGlow: '88, 166, 255', // rgb
+  dialCold: '#388bfd',
+  dialStable: '#3fb950',
+  dialHot: '#f85149',
   highlight: '#f0f6fc',
   panel: 'rgba(7, 9, 12, 0.75)',
   miniRoom: '#3a4554',
@@ -126,6 +138,7 @@ export function createRenderer(canvas) {
       );
       drawMap(ctx, layers);
       drawExit(ctx, map.exit, now);
+      drawReactor(ctx, map.reactor, game.reactor.temperature, now);
       const target = game.interactTarget(); // what E would do
       drawDoors(ctx, map.doors, target?.kind === 'door' ? target.door : null);
       for (const item of game.pickups) drawPickup(ctx, item);
@@ -147,7 +160,15 @@ export function createRenderer(canvas) {
         const pos = toScreen(player.x, player.y - PLAYER_SIZE / 2);
         drawTag(ctx, pos.x, pos.y - 5, player);
       }
-      if (target?.kind === 'door') {
+      // The dial sits on the reactor's face, so it never covers players standing around it.
+      const { reactor } = map;
+      const dialAt = toScreen(reactor.x + reactor.w / 2, reactor.y + reactor.h / 2);
+      drawDial(ctx, dialAt.x, dialAt.y + DIAL_RADIUS * 0.5, DIAL_RADIUS, game.reactor.temperature);
+
+      if (target?.kind === 'reactor') {
+        const pos = toScreen(reactor.x + reactor.w / 2, reactor.y + reactor.h);
+        drawPrompt(ctx, pos.x, pos.y + 6, 'E', 'Reactor controls', { below: true });
+      } else if (target?.kind === 'door') {
         const { door } = target;
         const pos = toScreen(door.x + door.w / 2, door.y);
         drawPrompt(ctx, pos.x, pos.y - 10, 'E', door.open ? 'Close' : 'Open');
@@ -167,7 +188,12 @@ export function createRenderer(canvas) {
         else if (!canTake(stack, game.ammoLeft)) drawPrompt(ctx, pos.x, pos.y + 4, null, 'Ammo full', { below: true });
       }
       drawHurt(ctx, viewW, viewH, 1 - (now - game.hurtAt) / HURT_FLASH_MS);
-      if (minimap) drawMinimap(ctx, layers.minimap, map, players, enemies, game.pickups, cam, viewW, viewH);
+      // For now the minimap stands in for the control-room terminal, so it needs power.
+      if (minimap && isPowered(game.reactor.temperature)) {
+        drawMinimap(ctx, layers.minimap, map, players, enemies, game.pickups, cam, viewW, viewH);
+      } else if (minimap) {
+        drawMinimapOffline(ctx, viewW);
+      }
     },
   };
 }
@@ -310,6 +336,70 @@ function drawEnemy(ctx, { x, y }) {
   ctx.lineWidth = 3 / TILE_PX;
   ctx.strokeStyle = COLORS.enemyEdge;
   ctx.stroke();
+}
+
+// The reactor: a blue block with a pulsing glow that grows brighter as it heats up.
+function drawReactor(ctx, rect, temperature, now) {
+  const heat = Math.min(1, temperature / 100);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 400);
+  for (let i = 5; i >= 1; i--) {
+    const pad = i * 0.15;
+    ctx.fillStyle = `rgba(${COLORS.reactorGlow}, ${(0.03 + 0.06 * heat) * (0.6 + 0.4 * pulse)})`;
+    ctx.fillRect(rect.x - pad, rect.y - pad, rect.w + pad * 2, rect.h + pad * 2);
+  }
+  ctx.fillStyle = COLORS.reactor;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  const inset = 0.6;
+  ctx.globalAlpha = 0.35 + 0.65 * heat;
+  ctx.fillStyle = COLORS.reactorCore;
+  ctx.fillRect(rect.x + inset, rect.y + inset, rect.w - inset * 2, rect.h - inset * 2);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = COLORS.reactorEdge;
+  ctx.lineWidth = 3 / TILE_PX;
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+}
+
+// A temperature dial: a half circle from cold (left) through the green band
+// (top) to meltdown (right), with a needle. (x, y) is the middle of its flat
+// bottom edge and r the radius of the colored band's center line; the whole
+// dial reaches DIAL_EXTENT * r from (x, y). Exported so the reactor menu can
+// draw a bigger one.
+export const DIAL_EXTENT = 1.2;
+export function drawDial(ctx, x, y, r, temperature) {
+  const width = r * (DIAL_EXTENT - 1);
+  const angle = (t) => Math.PI + (Math.min(100, Math.max(0, t)) / 100) * Math.PI;
+
+  ctx.fillStyle = COLORS.panel;
+  ctx.beginPath();
+  ctx.arc(x, y, r + width, Math.PI, Math.PI * 2);
+  ctx.closePath();
+  ctx.fill();
+
+  const band = (from, to, color) => {
+    ctx.beginPath();
+    ctx.arc(x, y, r, angle(from), angle(to));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  };
+  ctx.lineCap = 'butt';
+  band(0, REACTOR_POWER_MIN, COLORS.dialCold);
+  band(REACTOR_POWER_MIN, REACTOR_OVERHEAT_MIN, COLORS.dialStable);
+  band(REACTOR_OVERHEAT_MIN, 100, COLORS.dialHot);
+
+  const a = angle(temperature);
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + Math.cos(a) * (r + width / 2), y + Math.sin(a) * (r + width / 2));
+  ctx.strokeStyle = COLORS.highlight;
+  ctx.lineWidth = Math.max(2, r * 0.07);
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  ctx.fillStyle = COLORS.highlight;
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(2.5, r * 0.1), 0, Math.PI * 2);
+  ctx.fill();
 }
 
 // The extraction zone as a tinted square with a dashed edge, and the hatch in
@@ -458,6 +548,22 @@ function drawPrompt(ctx, x, y, key, label, { below = false } = {}) {
   ctx.fillText(label, left + 4 + keyW + gap, top + h / 2 + 1);
 }
 
+// Shown where the minimap would be while there's no power.
+function drawMinimapOffline(ctx, viewW) {
+  const label = 'Map offline: no power';
+  ctx.font = '600 12px system-ui, sans-serif';
+  const w = ctx.measureText(label).width + 24;
+  const left = viewW - MARGIN - w;
+  ctx.fillStyle = COLORS.panel;
+  ctx.beginPath();
+  ctx.roundRect(left, MARGIN, w, 28, 8);
+  ctx.fill();
+  ctx.fillStyle = COLORS.dialCold;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, left + w / 2, MARGIN + 14);
+}
+
 function drawMinimap(ctx, image, map, players, enemies, pickups, cam, viewW, viewH) {
   const s = MINIMAP_PX;
   const w = map.width * s;
@@ -488,6 +594,10 @@ function drawMinimap(ctx, image, map, players, enemies, pickups, cam, viewW, vie
   const tilesH = viewH / TILE_PX;
   ctx.strokeRect(left + (cam.x - tilesW / 2) * s, top + (cam.y - tilesH / 2) * s, tilesW * s, tilesH * s);
   ctx.restore();
+
+  const { reactor } = map;
+  ctx.fillStyle = COLORS.reactorCore;
+  ctx.fillRect(left + reactor.x * s, top + reactor.y * s, reactor.w * s, reactor.h * s);
 
   const { hatch } = map.exit;
   ctx.fillStyle = COLORS.exit;

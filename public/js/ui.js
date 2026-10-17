@@ -1,8 +1,17 @@
 // DOM screens around the game canvas: home (create / join), lobby, in-game
-// HUD and menu, level results, and a full-screen overlay for connection problems.
+// HUD, menu and reactor controls, level results, and a full-screen overlay for
+// connection problems.
 
 import { PLAYER_MAX_AMMO, PLAYER_MAX_HP } from '/shared/constants.js';
+import { reactorZone } from '/shared/reactor.js';
 import { loadPref, savePref } from './prefs.js';
+import { DIAL_EXTENT, drawDial } from './render.js';
+
+const REACTOR_STATUS = {
+  cold: 'Too cold: no power',
+  stable: 'Stable: power on',
+  overheating: 'Overheating!',
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -62,6 +71,8 @@ export function createUi(actions) {
   $('leave-game').addEventListener('click', () => actions.leave());
   $('overlay-button').addEventListener('click', () => actions.reconnect());
   $('results-continue').addEventListener('click', () => actions.dismissResults());
+  $('reactor-insert').addEventListener('click', () => actions.reactor('insert'));
+  $('reactor-extract').addEventListener('click', () => actions.reactor('extract'));
 
   function showError(message) {
     $('home-error').textContent = message;
@@ -77,6 +88,7 @@ export function createUi(actions) {
       if (screen !== 'home') $('home-error').hidden = true;
       if (screen !== 'game') {
         $('menu').hidden = true;
+        $('reactor-menu').hidden = true;
         $('down-notice').hidden = true;
       }
     },
@@ -97,13 +109,55 @@ export function createUi(actions) {
         : 'Waiting for the host to start the game…';
     },
 
-    // results: { time, players: [{ id, name, color, escaped, hp, down }] }
+    // results: { outcome, time, players: [{ id, name, color, escaped, hp, down }] }
     renderResults(results, you) {
+      const meltdown = results.outcome === 'meltdown';
+      $('results-heading').textContent = meltdown ? 'Meltdown' : 'Level complete';
+      $('results-heading').classList.toggle('error', meltdown);
       const minutes = Math.floor(results.time / 60);
       const seconds = String(Math.floor(results.time % 60)).padStart(2, '0');
       $('results-time').textContent = `${minutes}:${seconds}`;
       const escapedFirst = [...results.players].sort((a, b) => b.escaped - a.escaped);
-      $('results-players').replaceChildren(...escapedFirst.map((p) => resultItem(p, you)));
+      $('results-players').replaceChildren(...escapedFirst.map((p) => resultItem(p, you, meltdown)));
+    },
+
+    setReactorMenu(open) {
+      $('reactor-menu').hidden = !open;
+    },
+
+    // Called every frame while the reactor menu is open.
+    renderReactorMenu({ temperature, rodIn }) {
+      const canvas = $('reactor-dial');
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(canvas.clientWidth * dpr);
+      const h = Math.round(canvas.clientHeight * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      // Fit the whole dial, colored band included, with a little margin.
+      const margin = 6;
+      const r = Math.min(canvas.clientWidth / 2 - margin, canvas.clientHeight - 2 * margin) / DIAL_EXTENT;
+      drawDial(ctx, canvas.clientWidth / 2, canvas.clientHeight - margin, r, temperature);
+
+      const zone = reactorZone(temperature);
+      const status = `${Math.round(temperature)}% · ${REACTOR_STATUS[zone]} · rod ${rodIn ? 'in, heating' : 'out, cooling'}`;
+      if ($('reactor-status').textContent !== status) {
+        $('reactor-status').textContent = status;
+        $('reactor-status').className = `reactor-status ${zone}`;
+      }
+      $('reactor-insert').disabled = rodIn;
+      $('reactor-extract').disabled = !rodIn;
+    },
+
+    renderPower(on) {
+      const text = on ? 'on' : 'off';
+      if ($('power-text').textContent === text) return; // called every frame
+      $('power-text').textContent = text;
+      $('power-text').classList.toggle('on', on);
     },
 
     renderHud(lobby, latency) {
@@ -145,7 +199,7 @@ export function createUi(actions) {
   };
 }
 
-function resultItem(player, you) {
+function resultItem(player, you, meltdown) {
   const li = document.createElement('li');
   li.classList.toggle('left-behind', !player.escaped);
 
@@ -160,6 +214,7 @@ function resultItem(player, you) {
   outcome.className = 'tags';
   outcome.textContent = player.escaped
     ? `Escaped · ${player.hp}/${PLAYER_MAX_HP} HP`
+    : meltdown ? 'Killed in the meltdown'
     : player.down ? 'Left behind (down)' : 'Left behind';
 
   li.append(swatch, name, outcome);

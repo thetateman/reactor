@@ -46,7 +46,7 @@
 
   <section id="screen-results" class="screen" hidden>
     <div class="card">
-      <p class="eyebrow">Level complete</p>
+      <p id="results-heading" class="eyebrow">Level complete</p>
       <h1 id="results-time" class="code"></h1>
       <ul id="results-players" class="players"></ul>
       <button id="results-continue" class="primary">Back to lobby</button>
@@ -65,6 +65,10 @@
       <span>Ammo</span>
       <span id="ammo-text"></span>
     </div>
+    <div class="hud-ammo">
+      <span>Power</span>
+      <span id="power-text" class="power"></span>
+    </div>
     <div class="hud-help">
       <kbd>WASD</kbd> move · <kbd>Click</kbd> shoot · <kbd>E</kbd> use · <kbd>M</kbd> map · <kbd>Esc</kbd> menu
     </div>
@@ -74,6 +78,19 @@
     <strong>You're down</strong>
     <span>Press <kbd>Esc</kbd> for the menu.</span>
   </div>
+
+  <section id="reactor-menu" class="screen reactor-screen" hidden>
+    <div class="card reactor-card">
+      <h2>Reactor</h2>
+      <canvas id="reactor-dial" class="reactor-dial"></canvas>
+      <p id="reactor-status" class="reactor-status"></p>
+      <div class="row">
+        <button id="reactor-insert" class="primary grow">Insert rod</button>
+        <button id="reactor-extract" class="grow">Extract rod</button>
+      </div>
+      <p class="muted"><kbd>E</kbd> or <kbd>Esc</kbd> to close</p>
+    </div>
+  </section>
 
   <section id="menu" class="screen" hidden>
     <div class="card">

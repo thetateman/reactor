@@ -16,7 +16,8 @@ let held = 0;
 let interactPressed = false;
 let shotAim = null; // angle of a click not yet sent, in radians
 
-// Registers a one-shot handler for a key press (ignores auto-repeat).
+// Registers a one-shot handler for a key press (ignores auto-repeat). If the
+// handler returns true, the key's in-game meaning (E: interact) is skipped.
 export function onKey(code, handler) {
   actions.set(code, handler);
 }
@@ -55,8 +56,8 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (event.repeat) return;
-  if (event.code === 'KeyE') interactPressed = true;
-  actions.get(event.code)?.();
+  const handled = actions.get(event.code)?.();
+  if (event.code === 'KeyE' && !handled) interactPressed = true;
 });
 
 window.addEventListener('keyup', (event) => {
