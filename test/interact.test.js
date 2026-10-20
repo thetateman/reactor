@@ -36,7 +36,7 @@ test('every game starts with an ammo stack in the spawn room, clear of the playe
     assert.equal(stacks.length, 1);
 
     const [stack] = stacks;
-    const room = game.map.rooms[game.map.spawnRoom];
+    const [room] = game.map.rooms[game.map.spawnRoom].rects;
     assert.ok(stack.x > room.x + 1 && stack.x < room.x + room.w - 1, `seed ${seed}: not inside the spawn room`);
     assert.ok(stack.y > room.y + 1 && stack.y < room.y + room.h - 1, `seed ${seed}: not inside the spawn room`);
     for (const player of game.players.values()) {

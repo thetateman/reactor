@@ -13,7 +13,7 @@ const besideReactor = ({ reactor }) => ({ x: reactor.x - 0.5, y: reactor.y + rea
 function setup(seed = 11) {
   const game = new Game(seed, ['p']);
   game.stop();
-  const room = game.map.rooms[game.map.spawnRoom];
+  const [room] = game.map.rooms[game.map.spawnRoom].rects;
   const player = game.players.get('p');
   Object.assign(player, besideReactor(game.map));
   return { game, room, player };

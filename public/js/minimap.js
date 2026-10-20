@@ -1,4 +1,5 @@
 import { TILE } from '/shared/constants.js';
+import { roomOf } from '/shared/map.js';
 import { loadPref, savePref } from './prefs.js';
 
 // The player's own map: only the tiles they've seen, drawn as a small
@@ -17,7 +18,6 @@ const COLORS = {
   panel: 'rgba(7, 9, 12, 0.75)',
   border: 'rgba(240, 246, 252, 0.15)',
   room: '#3a4554',
-  corridor: '#2c3541',
   wall: '#5c6878',
   door: '#8b949e',
   reactor: '#79c0ff',
@@ -37,12 +37,6 @@ export class Minimap {
     this.layer.width = map.width * PX * RES;
     this.layer.height = map.height * PX * RES;
     this.ctx = this.layer.getContext('2d');
-    this.inRoom = new Uint8Array(map.width * map.height);
-    for (const room of map.rooms) {
-      for (let y = room.y; y < room.y + room.h; y++) {
-        for (let x = room.x; x < room.x + room.w; x++) this.inRoom[y * map.width + x] = 1;
-      }
-    }
     this.visited = new Set(); // ids of rooms we've been inside
     this.revealedRooms = new Set(); // visited rooms already shown in full
     this.unsaved = false;
@@ -62,17 +56,18 @@ export class Minimap {
   // Notes which room we're inside, and shows every visited room in full
   // while it's lit (lights[roomId]), even if we were there in the dark.
   visit(eye, lights) {
-    const room = this.map.rooms.find((r) =>
-      eye.x >= r.x && eye.x < r.x + r.w && eye.y >= r.y && eye.y < r.y + r.h);
-    if (room && !this.visited.has(room.id)) {
-      this.visited.add(room.id);
+    const room = roomOf(this.map, eye.x, eye.y);
+    if (room >= 0 && !this.visited.has(room)) {
+      this.visited.add(room);
       this.unsaved = true;
     }
     for (const id of this.visited) {
       if (!lights[id] || this.revealedRooms.has(id)) continue;
-      const r = this.map.rooms[id];
-      for (let y = r.y - 1; y <= r.y + r.h; y++) {
-        for (let x = r.x - 1; x <= r.x + r.w; x++) this.reveal(y * this.map.width + x);
+      // The room's floor and the walls around it.
+      for (const r of this.map.rooms[id].rects) {
+        for (let y = r.y - 1; y <= r.y + r.h; y++) {
+          for (let x = r.x - 1; x <= r.x + r.w; x++) this.reveal(y * this.map.width + x);
+        }
       }
       this.revealedRooms.add(id);
     }
@@ -86,8 +81,7 @@ export class Minimap {
       tile === TILE.WALL ? COLORS.wall
       : tile === TILE.DOOR ? COLORS.door
       : tile === TILE.REACTOR ? COLORS.reactor
-      : this.inRoom[index] ? COLORS.room
-      : COLORS.corridor;
+      : COLORS.room;
     const size = PX * RES;
     this.ctx.fillRect((index % width) * size, Math.floor(index / width) * size, size, size);
   }

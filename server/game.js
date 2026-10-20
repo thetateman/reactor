@@ -37,8 +37,7 @@ const ENEMY_DAMAGE = 1; // HP per second, per enemy touching a player
 // At 100 it melts down, killing everyone and ending the level. Its dial is
 // hidden from everyone until someone first uses the controls (`used`).
 //
-// Each room has a light (`lights[roomId]`), and the hallways share one
-// (`hallLights`); all are on while the reactor makes power.
+// Each room has a light (`lights[roomId]`); all are on while the reactor makes power.
 // Each player has a flashlight that drains its battery while it's on. Lighting
 // itself is drawn by the clients; the server only tracks what's switched on.
 //
@@ -59,7 +58,6 @@ export class Game {
     this.nextBulletId = 1;
     this.reactor = { temperature: 0, rodIn: false, used: false };
     this.lights = this.map.rooms.map(() => false);
-    this.hallLights = false;
 
     const spawns = spawnPoints(this.map, playerIds.length);
     playerIds.forEach((id, i) => {
@@ -115,7 +113,6 @@ export class Game {
       pickups: this.pickups,
       reactor: this.reactorState(),
       lights: this.lights,
-      hallLights: this.hallLights,
     });
   }
 
@@ -168,12 +165,12 @@ export class Game {
     const players = this.playerStates();
     const enemies = this.enemies.positions();
     const reactor = this.reactorState();
-    const { lights, hallLights } = this;
+    const { lights } = this;
     for (const player of this.players.values()) {
       if (!player.socket) continue;
       const { lastSeq: ack, ammo } = player;
       const battery = Math.round(player.battery * 10) / 10;
-      send(player.socket, { type: 'state', ack, ammo, battery, players, enemies, reactor, lights, hallLights });
+      send(player.socket, { type: 'state', ack, ammo, battery, players, enemies, reactor, lights });
     }
   }
 
@@ -182,9 +179,7 @@ export class Game {
   simulate(dt) {
     this.updateReactor(dt);
     if (this.result) return;
-    const powered = isPowered(this.reactor.temperature);
-    this.lights.fill(powered);
-    this.hallLights = powered;
+    this.lights.fill(isPowered(this.reactor.temperature));
 
     const players = [...this.players.values()];
     this.enemies.update(players, dt);
@@ -358,7 +353,7 @@ function reactorClearance(map, spot) {
 // Floor tile centers in the spawn room, nearest the reactor first, one per
 // player. A full lobby fits in the ring of tiles right around the reactor.
 function spawnPoints(map, count) {
-  const room = map.rooms[map.spawnRoom];
+  const [room] = map.rooms[map.spawnRoom].rects;
   const points = [];
   for (let y = room.y; y < room.y + room.h; y++) {
     for (let x = room.x; x < room.x + room.w; x++) {
@@ -377,7 +372,7 @@ const AMMO_REACTOR_CLEARANCE = 3;
 // A random tile center in the spawn room, away from the reactor and not
 // against a wall.
 function ammoSpot(map, rng) {
-  const room = map.rooms[map.spawnRoom];
+  const [room] = map.rooms[map.spawnRoom].rects;
   const spots = [];
   for (let y = room.y + 1; y < room.y + room.h - 1; y++) {
     for (let x = room.x + 1; x < room.x + room.w - 1; x++) {

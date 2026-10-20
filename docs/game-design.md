@@ -1,6 +1,6 @@
 # Reactor: game design
 
-Working design doc. It records what's decided, what's proposed, and what's still open. Last updated 2026-10-16.
+Working design doc. It records what's decided, what's proposed, and what's still open. Last updated 2026-10-19.
 
 Labels used below:
 - **Decided:** agreed, build it this way.
@@ -9,7 +9,7 @@ Labels used below:
 
 ## Vision
 
-A co-op escape game for a group of friends. Players load into a procedurally generated, melted-down nuclear facility laid out as a maze, and have to work together to get everyone out.
+A co-op escape game for a group of friends. Players load into a procedurally generated, melted-down nuclear facility, a warren of interconnected rooms, and have to work together to get everyone out.
 
 The design goal is **collaboration through different roles**. Players should need to split up, take on separate jobs, and share what they know to escape.
 
@@ -21,24 +21,44 @@ The design goal is **collaboration through different roles**. Players should nee
 | Area | State |
 |---|---|
 | Lobbies | Create a game or join one with a 4-letter code or invite link. The host starts the game. Players rejoin automatically after a refresh or disconnect. |
-| Maze levels | Generated from a seed. Each map has a 17×11 control room in the center, 12 chambers (8–11 tiles across), and 2-tile-wide maze passages with dead ends between them. Every room entrance has a door. The exit hatch sits inside an extraction zone in an outer chamber, at least 120 steps from spawn. |
+| Levels | Generated from a seed, entirely out of rooms with no hallways: 25–35 rooms, including a 17×11 control room in the center, and about a quarter to a third of them L-, Z- or T-shaped. Neighboring rooms share walls, every connection between rooms is a door, and there are plenty of alternate routes. The exit hatch sits inside an extraction zone in the room that's the longest walk from spawn (at least 70 steps). See "Level layout" below. |
 | Reactor | A solid 3×3 reactor in the middle of the control room, with a temperature dial, an Insert/Extract menu, power on/off, and an instant meltdown at 100%. See "Reactor version 1" below. |
 | Escape | E on the hatch ends the level. Every standing player in the extraction zone escapes. A results screen shows the time, who escaped with their remaining HP, and who was left behind. A meltdown ends the level too, with its own results screen. |
 | Health | Each player has 10 HP. A player at 0 HP is down: they can't move and enemies ignore them. There's no revive yet. |
 | Enemies | One spawns every 5 seconds on average, in a room with no player in it, up to 30 at once. Enemies have 3 HP, chase players they can see, drain 1 HP per second on contact, and can't open doors. |
 | Combat | Left-click fires toward the cursor. Players start with no ammo and carry at most 20 rounds. A bottomless ammo stack sits in the control room. Bullets stop at walls and closed doors. |
 | Interaction | E uses whatever is nearest, in this priority order: the hatch, then the reactor, then ammo, then the nearest door. |
-| Lighting | The level is dark. Rooms and hallways light up while the reactor makes power. Each player has a small circle of light and a flashlight (right-click) with 10 minutes of battery. See "Lighting, flashlights and minimap" below. |
+| Lighting | The level is dark. Rooms light up while the reactor makes power. Each player has a small circle of light and a flashlight (right-click) with 10 minutes of battery. See "Lighting, flashlights and minimap" below. |
 | Minimap | M toggles a small map that follows the player and shows only what they've explored, plus teammates. |
 | Audio | Gunshots, door open and close, ammo pickup, and looping background music. |
 | Testing aids | Shift+M shows the whole level, with the exit, enemies and every door, until the control-room computer map exists. |
 
-Level 1 is tuned so a group exploring **without** a map takes about 5 minutes. With the whole map visible it takes under a minute.
+Level 1 was tuned so a group exploring the old maze **without** a map took about 5 minutes. The room layout (2026-10-19) hasn't been timed yet.
 
 ## Shelved
 
 - **Hidden teams and PvP (shelved 2026-10-16).** The original concept split players into two secret teams that won by escaping or by incapacitating the other team. It's set aside in favor of pure co-op and could come back as a separate mode.
 - **Accumulating radiation (status open).** In the original concept, players built up radiation at an accelerating rate the longer they stayed. See the open questions.
+
+## Level layout (built 2026-10-19)
+
+Replaced the maze levels, which had too much passage and too little room. **Decided** (2026-10-19):
+
+- **All rooms, no hallways,** like the floor plan of a building. Neighboring rooms share the wall between them.
+- **25–35 rooms** on the current 81×63-tile map, counting the control room.
+- **About a quarter to a third of the rooms are merged** from two or three rectangles into L, Z or T shapes, with some variation from level to level.
+- **Every connection is a door.** There are no open archways for now.
+- **Many alternate paths:** after enough doors to reach every room, about half of the remaining pairs of neighboring rooms get a door too.
+
+How it's generated (`server/mapgen.js`):
+
+1. The control room stays a 17×11 rectangle in the exact center. The space around it is divided into four blocks arranged like a pinwheel, so no wall runs straight across the whole map. Which way the pinwheel turns is random.
+2. The blocks are split into rectangles (at least 4 tiles across), longest side first.
+3. Some pairs of neighboring rectangles are merged by opening the wall between them, if that gives a real corner (a step of at least 3 tiles), not a slight jog or just a bigger rectangle. A merged room has at most 1.5 times the control room's floor area. This means the control room is no longer always the largest room.
+4. Doors go in along a random spanning tree, so every room is reachable, then on about half of the other shared walls. The control room always has doors on at least two of its walls.
+5. The exit goes in the room that's the longest walk from spawn. The layout is regenerated if that walk is under 70 steps.
+
+The room count, merge share, door density, map size and minimum exit distance are all in one `LEVEL` setting, so later levels can use different values.
 
 ## The reactor and power (decided concept, details proposed)
 
@@ -54,15 +74,15 @@ Level 1 is tuned so a group exploring **without** a map takes about 5 minutes. W
   - too much and it **melts down, killing everyone on the map**.
 - The intended play pattern:
   - one or more players stay in the control room running the reactor and reading the terminal;
-  - the others search the maze for the exit;
+  - the others search the facility for the exit;
   - the two groups coordinate over **walkie-talkies**.
 
 ### Why it works
 
 The two roles hold different information:
 
-- **The operator** has the map but can't see what's in the corridors.
-- **The explorers** see the corridors but have no map.
+- **The operator** has the map but can't see what's in the rooms.
+- **The explorers** see the rooms but have no map.
 
 Neither group can do well alone, so they have to talk. The same pattern drives Lethal Company, where one player stays on the ship terminal guiding the others, and Keep Talking and Nobody Explodes.
 
@@ -135,7 +155,9 @@ These make the reactor matter: without power the level is dark, apart from what 
 **Lighting**
 
 - **Lit rooms** look as they did before lighting existed: fully visible, walls included, **from anywhere on screen, regardless of line of sight** (changed 2026-10-17 after playtesting; it had cast a shadow behind the reactor). Each room has its own light. For now, all of them are on whenever the reactor makes power (30% and up, including the red zone). Later levels may have the operator route power to specific rooms, and the server already tracks lights room by room.
-- **Hallways** (the maze passages) light up with power too, and are just as fully visible as lit rooms (changed 2026-10-17; they were originally always dark). They share one light, separate from the rooms', so they could later be powered on their own or by sector. With everything lit, power reveals all of the level on screen, enemies included, and flashlights matter only while the power is off.
+- A **wall between two rooms** is lit if either room is.
+- With every room lit, power reveals all of the level on screen, enemies included, and flashlights matter only while the power is off.
+- **Hallways** used to light up with power too, on a shared light of their own. There have been none since the room layout (2026-10-19), so that light was removed.
 - **What you see outside lit rooms:** your own light, flashlight beams and glows only show where they're in your line of sight. Walls, closed doors and the reactor block sight.
 - **Personal light:** in the dark, each player sees a small circle around them. It's fully lit within 0.8 tiles and fades out by 2.2.
 - **Glowing objects:**
@@ -162,10 +184,6 @@ These make the reactor matter: without power the level is dark, apart from what 
 - What you've explored is kept in the browser, so it survives a page refresh mid-level.
 - The full-level map that used to be on M stays available on **Shift+M**, for testing.
 
-**To decide later**
-
-- Hallway floors are a darker color than room floors, so flashlight beams in hallways (with the power off) are subtle. The colors could be brightened if they're hard to read.
-
 ### Ideas for later reactor versions
 
 - Rods burn down over time, so output slowly falls and fresh rods are needed.
@@ -184,8 +202,8 @@ Pick a few, not all:
 
 ### Proposed role links
 
-- **Fuel rods come from the maze.** Start with a small stock in the control room. Further rods have to be found by explorers and carried back, so the explorers keep the operator supplied and the roles depend on each other.
-- **Explorers need the operator's map to find their way,** and **the operator needs explorers' reports** to know what's actually down each corridor: enemies, locked doors, items.
+- **Fuel rods come from around the facility.** Start with a small stock in the control room. Further rods have to be found by explorers and carried back, so the explorers keep the operator supplied and the roles depend on each other.
+- **Explorers need the operator's map to find their way,** and **the operator needs explorers' reports** to know what's actually in each room: enemies, locked doors, items.
 
 ## Supporting systems needed
 
@@ -202,7 +220,7 @@ Pick a few, not all:
 1. **Reactor version 1: built 2026-10-16, now being playtested and tuned.** The single fuel rod, temperature dial, Insert/Extract menu, power on/off, and meltdown. See "Reactor version 1" above.
 2. **Lighting, flashlights and minimap: built 2026-10-17.** See "Lighting, flashlights and minimap" above.
 3. **Control-room computer map**, working only while the facility has power.
-4. **Items and batteries.** Inventory, flashlight and walkie batteries, the charging station, and fuel rods placed in the maze.
+4. **Items and batteries.** Inventory, flashlight and walkie batteries, the charging station, and fuel rods placed around the level.
 5. **Operator endgame**, whichever version is chosen.
 6. **Voice:** walkie-talkie radio and proximity voice. Use Discord until then.
 
@@ -210,11 +228,11 @@ Each step can be played and tested before the next one starts.
 
 ## Open questions
 
-1. **Fuel rods:** a stockpile in the control room, found in the maze, or both?
+1. **Fuel rods:** a stockpile in the control room, found around the level, or both?
 2. **Operator jobs:** which of the extra operator jobs, if any, appeal?
 3. **The operator's escape:** how does the operator get out? Options:
    - set the reactor to coast safely for a few minutes and run for it;
-   - scram it, then cross the dark maze with explorers guiding over the radio;
+   - scram it, then cross the dark facility with explorers guiding over the radio;
    - start a deliberate overload countdown and race the meltdown out.
 
    And must everyone escape for a "win"?

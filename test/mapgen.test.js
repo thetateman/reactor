@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TILE } from '../shared/constants.js';
-import { roomCenter, tileAt } from '../shared/map.js';
-import { generateMap } from '../server/mapgen.js';
+import { indexRooms, tileAt } from '../shared/map.js';
+import { LEVEL, generateMap } from '../server/mapgen.js';
 
 const SEEDS = Array.from({ length: 300 }, (_, i) => i * 7919 + 1);
 
@@ -16,7 +16,8 @@ test('same seed produces the same map', () => {
   const b = generateMap(1234);
   assert.deepEqual(a.tiles, b.tiles);
   assert.deepEqual(a.doors, b.doors);
-  assert.equal(a.spawnRoom, b.spawnRoom);
+  assert.deepEqual(a.rooms, b.rooms);
+  assert.deepEqual(a.exit, b.exit);
 });
 
 test('every walkable tile is reachable from spawn, with doors open', () => {
@@ -66,15 +67,87 @@ test('walkable space is fully enclosed by walls', () => {
   }
 });
 
-test('doors are straight runs set in a wall, with floor on both sides', () => {
+const inside = (inner, outer) =>
+  inner.x >= outer.x && inner.y >= outer.y &&
+  inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+
+const floorArea = (room) => room.rects.reduce((sum, r) => sum + r.w * r.h, 0);
+
+test('the level is all rooms: every walkable tile but the doors is in exactly one', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
-    assert.ok(map.rooms.length >= 4, `seed ${seed}: only ${map.rooms.length} rooms`); // hub + exit chambers
+    const covered = new Uint8Array(map.tiles.length);
+    for (const room of map.rooms) {
+      for (const r of room.rects) {
+        for (let y = r.y; y < r.y + r.h; y++) {
+          for (let x = r.x; x < r.x + r.w; x++) {
+            const i = y * map.width + x;
+            assert.equal(covered[i], 0, `seed ${seed}: rooms overlap at ${x},${y}`);
+            covered[i] = 1;
+            assert.ok([TILE.FLOOR, TILE.REACTOR].includes(map.tiles[i]), `seed ${seed}: room ${room.id} covers a wall`);
+          }
+        }
+      }
+    }
+    for (let i = 0; i < map.tiles.length; i++) {
+      if (map.tiles[i] === TILE.FLOOR) assert.ok(covered[i], `seed ${seed}: floor tile ${i} is outside the rooms`);
+    }
+    assert.deepEqual(map.roomAt, indexRooms(map));
+  }
+});
 
+test(`there are ${LEVEL.rooms[0]} to ${LEVEL.rooms[1]} rooms, about a quarter to a third of them merged from two or three rectangles`, () => {
+  let merged = 0;
+  let rooms = 0;
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    assert.ok(map.rooms.length >= LEVEL.rooms[0] && map.rooms.length <= LEVEL.rooms[1], `seed ${seed}: ${map.rooms.length} rooms`);
+    map.rooms.forEach((room, i) => assert.equal(room.id, i));
+    for (const room of map.rooms) {
+      // A merged room is its rectangles plus the strip of opened wall between each pair.
+      assert.ok([1, 3, 5].includes(room.rects.length), `seed ${seed}: room ${room.id} has ${room.rects.length} rects`);
+      if (room.rects.length > 1) merged++;
+    }
+    rooms += map.rooms.length;
+  }
+  const share = merged / rooms;
+  assert.ok(share >= 0.2 && share <= 0.35, `${(share * 100).toFixed(1)}% of rooms merged`);
+});
+
+test('merged rooms have proper corners, not slight jogs or plain rectangles', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    for (const room of map.rooms) {
+      if (room.rects.length === 1) continue;
+      const xs = room.rects.flatMap((r) => [r.x, r.x + r.w]);
+      const ys = room.rects.flatMap((r) => [r.y, r.y + r.h]);
+      const box = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+      assert.ok(floorArea(room) <= box - 9, `seed ${seed}: room ${room.id} is nearly a rectangle`);
+    }
+  }
+});
+
+test('every rectangle of every room is at least 4 tiles across', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    for (const room of map.rooms) {
+      // Rects 1 tile thick are opened walls between the others.
+      for (const r of room.rects.filter((r) => r.w > 1 && r.h > 1)) {
+        assert.ok(r.w >= 4 && r.h >= 4, `seed ${seed}: room ${room.id} has a ${r.w}x${r.h} part`);
+      }
+    }
+  }
+});
+
+test('doors are straight runs set in a wall, joining two different rooms', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    const joined = new Set();
     let doorTiles = 0;
     for (const door of map.doors) {
-      assert.ok(door.w === 1 || door.h === 1, `seed ${seed}: door ${door.id} is not a straight run`);
+      assert.ok((door.w === 2 && door.h === 1) || (door.w === 1 && door.h === 2), `seed ${seed}: door ${door.id} is ${door.w}x${door.h}`);
       const horizontal = door.h === 1;
+      const sides = new Set();
       for (let y = door.y; y < door.y + door.h; y++) {
         for (let x = door.x; x < door.x + door.w; x++) {
           doorTiles++;
@@ -82,30 +155,38 @@ test('doors are straight runs set in a wall, with floor on both sides', () => {
           const [ax, ay, bx, by] = horizontal ? [x, y - 1, x, y + 1] : [x - 1, y, x + 1, y];
           assert.equal(tileAt(map, ax, ay), TILE.FLOOR, `seed ${seed}: door ${door.id} blocked`);
           assert.equal(tileAt(map, bx, by), TILE.FLOOR, `seed ${seed}: door ${door.id} blocked`);
+          sides.add(map.roomAt[ay * map.width + ax]).add(map.roomAt[by * map.width + bx]);
         }
       }
+      // And with wall, not another door, at either end.
+      const [ex, ey, fx, fy] = horizontal
+        ? [door.x - 1, door.y, door.x + door.w, door.y]
+        : [door.x, door.y - 1, door.x, door.y + door.h];
+      assert.equal(tileAt(map, ex, ey), TILE.WALL, `seed ${seed}: door ${door.id} not set in a wall`);
+      assert.equal(tileAt(map, fx, fy), TILE.WALL, `seed ${seed}: door ${door.id} not set in a wall`);
+
+      assert.equal(sides.size, 2, `seed ${seed}: door ${door.id} doesn't join two rooms`);
+      const pair = [...sides].sort((a, b) => a - b).join(',');
+      assert.ok(!joined.has(pair), `seed ${seed}: two doors between rooms ${pair}`);
+      joined.add(pair);
     }
     assert.equal(doorTiles, map.tiles.filter((t) => t === TILE.DOOR).length);
+    // A spanning tree needs one fewer door than there are rooms; the rest make loops.
+    assert.ok(map.doors.length >= map.rooms.length + 5, `seed ${seed}: only ${map.doors.length} doors`);
   }
 });
 
-test('players spawn in a large room in the middle of the map', () => {
+test('players spawn in a large rectangular room in the middle of the map', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
-    const spawn = map.rooms[map.spawnRoom];
+    const { rects } = map.rooms[map.spawnRoom];
+    assert.equal(rects.length, 1, `seed ${seed}: spawn room isn't a rectangle`);
+    const [spawn] = rects;
     assert.ok(spawn.w >= 17 && spawn.h >= 11, `seed ${seed}: spawn room is ${spawn.w}x${spawn.h}`);
-    for (const room of map.rooms) {
-      assert.ok(room.w * room.h <= spawn.w * spawn.h, `seed ${seed}: room ${room.id} is bigger than the spawn room`);
-    }
-    const center = roomCenter(spawn);
-    assert.ok(Math.abs(center.x - map.width / 2) <= 2, `seed ${seed}: spawn room off-center`);
-    assert.ok(Math.abs(center.y - map.height / 2) <= 2, `seed ${seed}: spawn room off-center`);
+    assert.equal(spawn.x + spawn.w / 2, map.width / 2, `seed ${seed}: spawn room off-center`);
+    assert.equal(spawn.y + spawn.h / 2, map.height / 2, `seed ${seed}: spawn room off-center`);
   }
 });
-
-const inside = (inner, outer) =>
-  inner.x >= outer.x && inner.y >= outer.y &&
-  inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
 
 test('the hatch sits in its extraction zone, in a room far from spawn', () => {
   for (const seed of SEEDS) {
@@ -113,7 +194,7 @@ test('the hatch sits in its extraction zone, in a room far from spawn', () => {
     const { room, hatch, zone } = map.exit;
     assert.notEqual(room, map.spawnRoom);
     assert.ok(inside(hatch, zone), `seed ${seed}: hatch outside its zone`);
-    assert.ok(inside(zone, map.rooms[room]), `seed ${seed}: zone outside the exit room`);
+    assert.ok(map.rooms[room].rects.some((r) => inside(zone, r)), `seed ${seed}: zone outside the exit room`);
 
     // Walk from the middle of the spawn room to the hatch, through doors.
     const { width, tiles } = map;
@@ -130,49 +211,14 @@ test('the hatch sits in its extraction zone, in a room far from spawn', () => {
       }
     }
     const route = dist.get(hatch.y * width + hatch.x);
-    assert.ok(route >= 100, `seed ${seed}: hatch only ${route} steps from spawn`);
-  }
-});
-
-test('between the rooms is a maze, with dead ends', () => {
-  for (const seed of SEEDS.slice(0, 50)) {
-    const map = generateMap(seed);
-    const inRoom = (x, y) => map.rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
-    let cells = 0;
-    let passage = 0;
-    let deadEnds = 0;
-    // Cells are the 2x2 floor squares at (3cx + 1, 3cy + 1).
-    for (let y = 1; y < map.height - 1; y += 3) {
-      for (let x = 1; x < map.width - 1; x += 3) {
-        cells++;
-        if (inRoom(x, y)) continue;
-        passage++;
-        const ways = [tileAt(map, x, y - 1), tileAt(map, x + 2, y), tileAt(map, x, y + 2), tileAt(map, x - 1, y)]
-          .filter(walkable).length;
-        if (ways === 1) deadEnds++;
-      }
-    }
-    assert.ok(passage >= cells * 0.6, `seed ${seed}: only ${passage} of ${cells} cells are passage`);
-    assert.ok(deadEnds >= 15, `seed ${seed}: only ${deadEnds} dead ends`);
-  }
-});
-
-test('chambers are 3 to 4 cells on a side, and there are 12 of them', () => {
-  for (const seed of SEEDS) {
-    const map = generateMap(seed);
-    const chambers = map.rooms.filter((r) => r.id !== map.spawnRoom);
-    assert.equal(chambers.length, 12, `seed ${seed}`);
-    for (const r of chambers) {
-      // A room n cells wide is 3n - 1 tiles inside.
-      assert.ok([8, 11].includes(r.w) && [8, 11].includes(r.h), `seed ${seed}: chamber ${r.id} is ${r.w}x${r.h}`);
-    }
+    assert.ok(route >= LEVEL.minExitRoute, `seed ${seed}: hatch only ${route} steps from spawn`);
   }
 });
 
 test('the spawn room has doors on at least two different walls', () => {
   for (const seed of SEEDS) {
     const map = generateMap(seed);
-    const r = map.rooms[map.spawnRoom];
+    const [r] = map.rooms[map.spawnRoom].rects;
     const walls = new Set();
     for (const d of map.doors) {
       const alongX = d.h === 1 && d.x >= r.x && d.x < r.x + r.w;
@@ -183,5 +229,14 @@ test('the spawn room has doors on at least two different walls', () => {
       if (alongY && d.x === r.x + r.w) walls.add('right');
     }
     assert.ok(walls.size >= 2, `seed ${seed}: exits only on ${[...walls]}`);
+  }
+});
+
+test('a level of a different size and room count can be generated', () => {
+  const level = { ...LEVEL, width: 61, height: 45, rooms: [12, 16], minExitRoute: 40 };
+  for (const seed of SEEDS.slice(0, 50)) {
+    const map = generateMap(seed, level);
+    assert.equal(map.width, 61);
+    assert.ok(map.rooms.length >= 12 && map.rooms.length <= 16, `seed ${seed}: ${map.rooms.length} rooms`);
   }
 });

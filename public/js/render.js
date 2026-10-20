@@ -20,7 +20,6 @@ const DIAL_RADIUS = 26; // CSS pixels, the dial over the reactor
 const COLORS = {
   void: '#07090c',
   dark: '#020305', // what's neither lit nor in sight
-  corridor: '#151a21',
   room: '#1b222c',
   grid: 'rgba(255, 255, 255, 0.04)',
   wall: '#2b333e',
@@ -53,7 +52,6 @@ const COLORS = {
   highlight: '#f0f6fc',
   panel: 'rgba(7, 9, 12, 0.75)',
   miniRoom: '#3a4554',
-  miniCorridor: '#2c3541',
   miniWall: '#5c6878',
 };
 const AWAY_ALPHA = 0.35; // disconnected players are drawn faded
@@ -250,12 +248,10 @@ function follow(pos, mapSize, viewSize) {
 
 // Static geometry, built once per map as paths in tile coordinates.
 function buildLayers(map) {
-  const { width, height, tiles, rooms } = map;
-  const walkable = (x, y) => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return false;
-    const tile = tiles[y * width + x];
-    return tile === TILE.FLOOR || tile === TILE.DOOR;
-  };
+  const { width, height, tiles } = map;
+  const is = (x, y, ...kinds) => x >= 0 && y >= 0 && x < width && y < height && kinds.includes(tiles[y * width + x]);
+  const walkable = (x, y) => is(x, y, TILE.FLOOR, TILE.DOOR);
+  const floorAt = (x, y) => is(x, y, TILE.FLOOR);
 
   const floor = new Path2D();
   const walls = new Path2D();
@@ -275,24 +271,31 @@ function buildLayers(map) {
     }
   }
 
-  const roomFloors = new Path2D();
+  // Faint lines between neighbouring floor tiles, one segment per straight run.
   const grid = new Path2D();
-  for (const room of rooms) {
-    roomFloors.rect(room.x, room.y, room.w, room.h);
-    for (let x = room.x + 1; x < room.x + room.w; x++) {
-      grid.moveTo(x, room.y);
-      grid.lineTo(x, room.y + room.h);
+  for (let x = 1; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      if (!floorAt(x - 1, y) || !floorAt(x, y)) continue;
+      const start = y;
+      while (floorAt(x - 1, y + 1) && floorAt(x, y + 1)) y++;
+      grid.moveTo(x, start);
+      grid.lineTo(x, y + 1);
     }
-    for (let y = room.y + 1; y < room.y + room.h; y++) {
-      grid.moveTo(room.x, y);
-      grid.lineTo(room.x + room.w, y);
+  }
+  for (let y = 1; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!floorAt(x, y - 1) || !floorAt(x, y)) continue;
+      const start = x;
+      while (floorAt(x + 1, y - 1) && floorAt(x + 1, y)) x++;
+      grid.moveTo(start, y);
+      grid.lineTo(x + 1, y);
     }
   }
 
-  return { floor, roomFloors, grid, walls, wallEdges, fullMap: buildFullMap(map) };
+  return { floor, grid, walls, wallEdges, fullMap: buildFullMap(map) };
 }
 
-function buildFullMap({ width, height, tiles, rooms }) {
+function buildFullMap({ width, height, tiles }) {
   const res = 2; // canvas pixels per minimap pixel, so it stays sharp on hi-dpi screens
   const px = FULL_MAP_PX * res;
   const canvas = document.createElement('canvas');
@@ -304,20 +307,16 @@ function buildFullMap({ width, height, tiles, rooms }) {
     for (let x = 0; x < width; x++) {
       const tile = tiles[y * width + x];
       if (tile === TILE.VOID) continue;
-      ctx.fillStyle = tile === TILE.WALL ? COLORS.miniWall : COLORS.miniCorridor;
+      ctx.fillStyle = tile === TILE.WALL ? COLORS.miniWall : COLORS.miniRoom;
       ctx.fillRect(x * px, y * px, px, px);
     }
   }
-  ctx.fillStyle = COLORS.miniRoom;
-  for (const room of rooms) ctx.fillRect(room.x * px, room.y * px, room.w * px, room.h * px);
   return canvas;
 }
 
 function drawMap(ctx, layers) {
-  ctx.fillStyle = COLORS.corridor;
-  ctx.fill(layers.floor);
   ctx.fillStyle = COLORS.room;
-  ctx.fill(layers.roomFloors);
+  ctx.fill(layers.floor);
   ctx.strokeStyle = COLORS.grid;
   ctx.lineWidth = 1 / TILE_PX;
   ctx.stroke(layers.grid);

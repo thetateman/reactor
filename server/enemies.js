@@ -1,5 +1,5 @@
-import { ENEMY_MAX_HP, ENEMY_RADIUS } from '../shared/constants.js';
-import { isSolid, lineOfSight } from '../shared/map.js';
+import { ENEMY_MAX_HP, ENEMY_RADIUS, TILE } from '../shared/constants.js';
+import { isSolid, lineOfSight, roomOf } from '../shared/map.js';
 import { PLAYER_HALF, moveBody } from '../shared/physics.js';
 
 const SPAWN_INTERVAL = 5; // seconds between spawns, on average, across the whole map
@@ -24,6 +24,11 @@ export class Enemies {
     this.rng = rng;
     this.list = [];
     this.nextId = 1;
+    // Per room, the floor tiles an enemy can appear on.
+    this.spawnTiles = map.rooms.map(() => []);
+    for (let i = 0; i < map.tiles.length; i++) {
+      if (map.roomAt[i] >= 0 && map.tiles[i] === TILE.FLOOR) this.spawnTiles[map.roomAt[i]].push(i);
+    }
   }
 
   // Advances spawning and movement by `dt` seconds. `players` are bodies
@@ -82,13 +87,14 @@ export class Enemies {
     if (this.list.length >= MAX_ENEMIES) return;
     if (this.rng.next() >= dt / SPAWN_INTERVAL) return;
 
-    const free = this.map.rooms.filter((room) => !players.some((p) => inRoom(p, room)));
+    const occupied = new Set(players.map((p) => roomOf(this.map, p.x, p.y)));
+    const free = this.map.rooms.filter((room) => !occupied.has(room.id));
     if (!free.length) return;
-    const room = this.rng.pick(free);
+    const tile = this.rng.pick(this.spawnTiles[this.rng.pick(free).id]);
     this.list.push({
       id: this.nextId++,
-      x: room.x + this.rng.int(0, room.w - 1) + 0.5,
-      y: room.y + this.rng.int(0, room.h - 1) + 0.5,
+      x: (tile % this.map.width) + 0.5,
+      y: Math.floor(tile / this.map.width) + 0.5,
       hp: ENEMY_MAX_HP,
       mode: 'idle',
       goal: null,
@@ -206,10 +212,6 @@ function touches(enemy, player) {
   const dx = Math.max(Math.abs(enemy.x - player.x) - PLAYER_HALF, 0);
   const dy = Math.max(Math.abs(enemy.y - player.y) - PLAYER_HALF, 0);
   return Math.hypot(dx, dy) <= ENEMY_RADIUS + TOUCH_SLACK;
-}
-
-function inRoom(body, room) {
-  return body.x >= room.x && body.x < room.x + room.w && body.y >= room.y && body.y < room.y + room.h;
 }
 
 function round(n) {

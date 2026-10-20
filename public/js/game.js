@@ -24,7 +24,7 @@ export class ClientGame {
   // `onTakeAmmo()` is called when we press E at an ammo stack we can take from,
   // and `onUseReactor()` when we press E beside the reactor.
   constructor(
-    { seed, you, ammo, battery, map, players, enemies, pickups, reactor, lights, hallLights },
+    { seed, you, ammo, battery, map, players, enemies, pickups, reactor, lights },
     { onFire, onTakeAmmo, onUseReactor } = {},
   ) {
     this.onFire = onFire ?? (() => {});
@@ -36,7 +36,6 @@ export class ClientGame {
     this.pickups = pickups; // [{ id, kind, x, y }]
     this.reactor = reactor; // { temperature, rodIn, used }, as of the last server update
     this.lights = lights; // lights[roomId]: whether that room is lit
-    this.hallLights = hallLights; // whether the hallways are lit
     this.self = { x: 0, y: 0 };
     this.prev = { x: 0, y: 0 };
     this.hp = PLAYER_MAX_HP;
@@ -102,12 +101,11 @@ export class ClientGame {
     send('input', input);
   }
 
-  applyState({ ack, ammo, battery, players, enemies, reactor, lights, hallLights }) {
+  applyState({ ack, ammo, battery, players, enemies, reactor, lights }) {
     this.pending = this.pending.filter((input) => input.seq > ack);
     this.ammo = ammo;
     this.reactor = reactor;
     this.lights = lights;
-    this.hallLights = hallLights;
     this.battery = battery;
     this.applySnapshot(players, enemies);
     // The server stops applying a downed player's movement, so don't replay it.

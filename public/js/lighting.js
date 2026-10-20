@@ -3,8 +3,7 @@ import { conePolygon, visibilityPolygon, withinAngle } from '/shared/vision.js';
 
 // Light and sight, worked out in the browser each frame. The level is dark
 // except for:
-//   - rooms whose light is on (with their walls), and the hallways when
-//     theirs is, as the server reports
+//   - rooms whose light is on (with their walls), as the server reports
 //   - the glow around the reactor
 // which are all fully visible from anywhere, line of sight or not, and
 //   - a small soft circle around you, so you're never completely blind
@@ -27,38 +26,35 @@ export const LIGHT = {
 // tags and health bars) a bit inside the point where it fades out completely.
 const DIM = 0.85;
 
-const roomLookups = new WeakMap();
-const hallPaths = new WeakMap();
+const tileRoomLookups = new WeakMap();
 
-// Tile index -> id of the room it belongs to, counting the room's walls and
-// doors (so a lit room's walls are lit too), or -1.
-function roomLookup(map) {
-  let lookup = roomLookups.get(map);
+// Tile index -> ids of the rooms that light it: the room it's in, or for a
+// wall or door, every room it borders, corners included (so a lit room's walls
+// are lit too, and a wall between two rooms is lit by either).
+function tileRooms(map) {
+  let lookup = tileRoomLookups.get(map);
   if (!lookup) {
-    lookup = new Int16Array(map.width * map.height).fill(-1);
-    for (const room of map.rooms) {
-      for (let y = room.y - 1; y <= room.y + room.h; y++) {
-        for (let x = room.x - 1; x <= room.x + room.w; x++) lookup[y * map.width + x] = room.id;
+    const { width, height, roomAt } = map;
+    lookup = Array.from(roomAt, (room, i) => {
+      if (room >= 0) return [room];
+      const x = i % width;
+      const y = Math.floor(i / width);
+      const around = new Set();
+      for (let ny = Math.max(y - 1, 0); ny <= Math.min(y + 1, height - 1); ny++) {
+        for (let nx = Math.max(x - 1, 0); nx <= Math.min(x + 1, width - 1); nx++) {
+          if (roomAt[ny * width + nx] >= 0) around.add(roomAt[ny * width + nx]);
+        }
       }
-    }
-    roomLookups.set(map, lookup);
+      return [...around];
+    });
+    tileRoomLookups.set(map, lookup);
   }
   return lookup;
 }
 
-// The hallways (every tile outside the rooms and their walls) as one path,
-// in tile units, to light them all at once.
-function hallPath(map) {
-  let path = hallPaths.get(map);
-  if (!path) {
-    const rooms = roomLookup(map);
-    path = new Path2D();
-    for (let i = 0; i < rooms.length; i++) {
-      if (rooms[i] < 0) path.rect(i % map.width, Math.floor(i / map.width), 1, 1);
-    }
-    hallPaths.set(map, path);
-  }
-  return path;
+// Whether a tile's room light, or that of a room it borders, is on.
+function tileLit(map, lights, index) {
+  return tileRooms(map)[index].some((id) => lights[id]);
 }
 
 // Everything needed to draw this frame's darkness and to test what's visible.
@@ -67,8 +63,7 @@ function hallPath(map) {
 // `onSeen(tileIndex)` is called for every lit tile in our line of sight. (Lit
 // rooms show on screen from anywhere, but only the parts in our line of sight
 // count as seen; the minimap reveals a lit room in full once we've been inside it.)
-export function computeScene({ map, lights, hallLights, flashlightOn }, eye, aim, others, range, onSeen) {
-  const rooms = roomLookup(map);
+export function computeScene({ map, lights, flashlightOn }, eye, aim, others, range, onSeen) {
   const litRooms = map.rooms.filter((room) => lights[room.id]);
   const reactorGlow = { ...center(map.reactor), radius: LIGHT.reactorGlow };
   const glows = [{ ...center(map.exit.hatch), radius: LIGHT.hatchGlow }]; // only seen in line of sight
@@ -88,13 +83,13 @@ export function computeScene({ map, lights, hallLights, flashlightOn }, eye, aim
     const lit =
       dist <= LIGHT.ownOuter * DIM ||
       (ownFlashlight && dist <= LIGHT.flashRange * DIM && withinAngle(angle, aim, LIGHT.flashHalfAngle)) ||
-      (rooms[index] >= 0 ? lights[rooms[index]] : hallLights) ||
+      tileLit(map, lights, index) ||
       [reactorGlow, ...glows].some((g) => Math.hypot((index % map.width) + 0.5 - g.x, Math.floor(index / map.width) + 0.5 - g.y) <= g.radius);
     if (lit) onSeen(index);
   });
   const vision = visibilityPolygon(map, eye.x, eye.y, range, LIGHT.visionRays, seen);
 
-  return { map, eye, vision, litRooms, hallLights, reactorGlow, glows, ownFlashlight, flashlights };
+  return { map, eye, vision, lights, litRooms, reactorGlow, glows, ownFlashlight, flashlights };
 }
 
 // Erases the lit, visible parts of a darkness layer. `ctx` uses the world
@@ -102,8 +97,9 @@ export function computeScene({ map, lights, hallLights, flashlightOn }, eye, aim
 export function paintLight(ctx, scene) {
   const { eye } = scene;
   ctx.fillStyle = '#000';
-  for (const room of scene.litRooms) ctx.fillRect(room.x - 1, room.y - 1, room.w + 2, room.h + 2);
-  if (scene.hallLights) ctx.fill(hallPath(scene.map));
+  for (const room of scene.litRooms) {
+    for (const r of room.rects) ctx.fillRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
+  }
   const { reactorGlow: r } = scene;
   fillGlow(ctx, r.x, r.y, r.radius * 0.4, r.radius);
 
@@ -137,12 +133,14 @@ export function paintLight(ctx, scene) {
   ctx.restore();
 }
 
-// Whether we can see the point: it's in a lit room, a lit hallway or the
+// Whether we can see the point: it's in a lit room (or its walls) or the
 // reactor's glow, or it's lit some other way and in our line of sight.
 export function canSee(scene, x, y) {
   const { map, reactorGlow } = scene;
-  const room = roomLookup(map)[Math.floor(y) * map.width + Math.floor(x)];
-  if (room >= 0 ? scene.litRooms.some((r) => r.id === room) : scene.hallLights) return true;
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  const onMap = tx >= 0 && ty >= 0 && tx < map.width && ty < map.height;
+  if (onMap && tileLit(map, scene.lights, ty * map.width + tx)) return true;
   if (Math.hypot(x - reactorGlow.x, y - reactorGlow.y) <= reactorGlow.radius * DIM) return true;
   return isLit(scene, x, y) && lineOfSight(scene.map, scene.eye.x, scene.eye.y, x, y);
 }

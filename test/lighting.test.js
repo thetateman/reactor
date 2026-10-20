@@ -75,18 +75,15 @@ test('a flashlight cone starts at the player and stays within its angle and rang
   assert.ok(withinAngle(-Math.PI + 0.05, Math.PI - 0.05, 0.2), 'wraps around');
 });
 
-test('room and hallway lights are on while the reactor makes power', () => {
+test('room lights are on while the reactor makes power', () => {
   const { game } = setup();
   assert.ok(game.lights.length === game.map.rooms.length && game.lights.every((on) => !on));
-  assert.equal(game.hallLights, false);
   game.reactor.temperature = REACTOR_POWER_MIN + 10;
   run(game, TICK);
   assert.ok(game.lights.every((on) => on));
-  assert.equal(game.hallLights, true);
   game.reactor.temperature = REACTOR_POWER_MIN - 1;
   run(game, TICK);
   assert.ok(game.lights.every((on) => !on));
-  assert.equal(game.hallLights, false);
 });
 
 test('right-click toggles the flashlight, which drains its battery only while on', () => {
@@ -143,5 +140,4 @@ test('everyone sees where each flashlight points; battery is only in your own st
   const own = messages.p.findLast((m) => m.type === 'state');
   assert.ok(own.battery <= FLASHLIGHT_BATTERY && own.battery > FLASHLIGHT_BATTERY - 2);
   assert.ok(Array.isArray(own.lights));
-  assert.equal(typeof own.hallLights, 'boolean');
 });
