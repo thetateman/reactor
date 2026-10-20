@@ -79,9 +79,10 @@ The reactor gets built and tuned on its own before anything else. The goal is to
 
 **How it works:**
 
-- **Look:** the reactor is a glowing blue 3×3-tile block in the middle of the control room. It glows brighter as it heats up.
+- **Look:** the reactor is a glowing blue 3×3-tile block in the middle of the control room. Its glow is constant, the same at any temperature (decided 2026-10-19).
 - **Solid:** players, enemies and bullets can't pass through it.
 - **Dial:** a temperature dial sits on the reactor's face. It's drawn there rather than above the block so it never covers players standing next to it.
+  - **It's discovered by using the reactor** (decided 2026-10-19). At first everyone sees only a glowing blue square. Once any player presses Insert or Extract in the reactor's menu, the dial shows on the reactor for everyone for the rest of the level. The menu's own larger dial always shows.
   - Left is **blue**: too cool, no power.
   - The center/top is **green**: stable, producing power.
   - Right is **red**: overheating, still producing power.
@@ -138,7 +139,7 @@ These make the reactor matter: without power the level is dark, apart from what 
 - **What you see outside lit rooms:** your own light, flashlight beams and glows only show where they're in your line of sight. Walls, closed doors and the reactor block sight.
 - **Personal light:** in the dark, each player sees a small circle around them. It's fully lit within 0.8 tiles and fades out by 2.2.
 - **Glowing objects:**
-  - The **reactor** glows, more brightly as it heats up (a radius of 2.5 tiles cold, up to 4.5 at meltdown). Once any side of it is in sight, the whole block and its dial are shown.
+  - The **reactor** always glows, lighting a 3.5-tile radius around it whatever its temperature. Like a lit room, the glow is visible from anywhere on screen, line of sight or not (decided 2026-10-19), so it shows on every side of the reactor and anything in it can be seen. Once any side of it is in sight, the whole block (and its dial, once revealed) is shown.
   - The **exit hatch** glows faintly, within about 1.6 tiles.
 - **Outside your sight** is pitch black. The minimap does the remembering.
 - **Enemies and teammates** in the dark can't be seen.

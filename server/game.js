@@ -34,7 +34,8 @@ const ENEMY_DAMAGE = 1; // HP per second, per enemy touching a player
 //
 // The reactor in the spawn room starts cold. With its fuel rod in it heats
 // up, and with the rod out it cools (see REACTOR_* in shared/constants.js).
-// At 100 it melts down, killing everyone and ending the level.
+// At 100 it melts down, killing everyone and ending the level. Its dial is
+// hidden from everyone until someone first uses the controls (`used`).
 //
 // Each room has a light (`lights[roomId]`), and the hallways share one
 // (`hallLights`); all are on while the reactor makes power.
@@ -56,7 +57,7 @@ export class Game {
     this.enemies = new Enemies(this.map, createRng(seed ^ 0x5bd1e995));
     this.bullets = []; // { id, x, y, dx, dy, dist }: current position, unit direction, distance flown
     this.nextBulletId = 1;
-    this.reactor = { temperature: 0, rodIn: false };
+    this.reactor = { temperature: 0, rodIn: false, used: false };
     this.lights = this.map.rooms.map(() => false);
     this.hallLights = false;
 
@@ -210,8 +211,9 @@ export class Game {
   controlReactor(id, action) {
     const player = this.players.get(id);
     if (!player || player.down || !nearReactor(this.map, player)) return;
-    if (action === 'insert') this.reactor.rodIn = true;
-    else if (action === 'extract') this.reactor.rodIn = false;
+    if (action !== 'insert' && action !== 'extract') return;
+    this.reactor.rodIn = action === 'insert';
+    this.reactor.used = true;
   }
 
   // Everyone on the map dies.
@@ -243,8 +245,8 @@ export class Game {
   }
 
   reactorState() {
-    const { temperature, rodIn } = this.reactor;
-    return { temperature: Math.round(temperature * 100) / 100, rodIn };
+    const { temperature, rodIn, used } = this.reactor;
+    return { temperature: Math.round(temperature * 100) / 100, rodIn, used };
   }
 
   // Fires from the player's center at angle `aim`, if they have ammo.

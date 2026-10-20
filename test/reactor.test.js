@@ -25,9 +25,9 @@ function run(game, seconds) {
   for (let t = 0; t < seconds - 1e-9; t += TICK) game.simulate(TICK);
 }
 
-test('the reactor starts cold, with the rod out and no power', () => {
+test('the reactor starts cold, with the rod out, no power and its dial hidden', () => {
   const { game } = setup();
-  assert.deepEqual(game.reactor, { temperature: 0, rodIn: false });
+  assert.deepEqual(game.reactor, { temperature: 0, rodIn: false, used: false });
   assert.equal(isPowered(game.reactor.temperature), false);
 });
 
@@ -86,6 +86,24 @@ test('only a standing player next to the reactor can use its controls', () => {
   assert.equal(game.reactor.rodIn, false);
   game.controlReactor('p', 'insert');
   assert.equal(game.reactor.rodIn, true);
+});
+
+test('once anyone uses the controls, everyone is told the dial is revealed', () => {
+  const { game, player } = setup(['p', 'q']);
+  const far = game.players.get('q');
+  Object.assign(far, { x: game.map.reactor.x - REACTOR_RANGE - 1, y: player.y });
+  const seenByQ = [];
+  far.socket = { readyState: 1, send: (d) => seenByQ.push(JSON.parse(d)) };
+
+  game.controlReactor('q', 'insert'); // out of reach: doesn't count
+  assert.equal(game.reactor.used, false);
+
+  game.controlReactor('p', 'insert');
+  game.controlReactor('p', 'extract');
+  assert.equal(game.reactor.used, true, 'and it stays revealed');
+  game.lastTick = performance.now();
+  game.tick();
+  assert.equal(seenByQ.findLast((m) => m.type === 'state').reactor.used, true);
 });
 
 test('the reactor is solid, and E beside it opens its controls', () => {

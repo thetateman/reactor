@@ -4,19 +4,20 @@ import { conePolygon, visibilityPolygon, withinAngle } from '/shared/vision.js';
 // Light and sight, worked out in the browser each frame. The level is dark
 // except for:
 //   - rooms whose light is on (with their walls), and the hallways when
-//     theirs is, as the server reports; these are fully visible from
-//     anywhere, line of sight or not
+//     theirs is, as the server reports
+//   - the glow around the reactor
+// which are all fully visible from anywhere, line of sight or not, and
 //   - a small soft circle around you, so you're never completely blind
 //   - flashlight cones, yours and your teammates'
-//   - the glow of the reactor and of the exit hatch
-// and of those last three, you only see what's in your own line of sight.
+//   - the faint glow of the exit hatch
+// of which you only see what's in your own line of sight.
 
 export const LIGHT = {
   ownInner: 0.8, // tiles; fully lit within this of you
   ownOuter: 2.2, // and faded to dark here
   flashRange: 10,
   flashHalfAngle: Math.PI / 6, // a 60 degree cone
-  reactorGlow: [2.5, 4.5], // radius when cold and at meltdown
+  reactorGlow: 3.5, // radius of the light around the reactor, whatever its temperature
   hatchGlow: 1.6,
   visionRays: 720,
   coneRays: 40,
@@ -66,15 +67,11 @@ function hallPath(map) {
 // `onSeen(tileIndex)` is called for every lit tile in our line of sight. (Lit
 // rooms show on screen from anywhere, but only the parts in our line of sight
 // count as seen; the minimap reveals a lit room in full once we've been inside it.)
-export function computeScene({ map, lights, hallLights, reactor, flashlightOn }, eye, aim, others, range, onSeen) {
+export function computeScene({ map, lights, hallLights, flashlightOn }, eye, aim, others, range, onSeen) {
   const rooms = roomLookup(map);
   const litRooms = map.rooms.filter((room) => lights[room.id]);
-  const heat = Math.min(1, reactor.temperature / 100);
-  const [cold, hot] = LIGHT.reactorGlow;
-  const glows = [
-    { ...center(map.reactor), radius: cold + (hot - cold) * heat },
-    { ...center(map.exit.hatch), radius: LIGHT.hatchGlow },
-  ];
+  const reactorGlow = { ...center(map.reactor), radius: LIGHT.reactorGlow };
+  const glows = [{ ...center(map.exit.hatch), radius: LIGHT.hatchGlow }]; // only seen in line of sight
   const ownFlashlight = flashlightOn ? { x: eye.x, y: eye.y, aim } : null;
 
   // Teammates' beams that could reach anything we can see.
@@ -92,12 +89,12 @@ export function computeScene({ map, lights, hallLights, reactor, flashlightOn },
       dist <= LIGHT.ownOuter * DIM ||
       (ownFlashlight && dist <= LIGHT.flashRange * DIM && withinAngle(angle, aim, LIGHT.flashHalfAngle)) ||
       (rooms[index] >= 0 ? lights[rooms[index]] : hallLights) ||
-      glows.some((g) => Math.hypot((index % map.width) + 0.5 - g.x, Math.floor(index / map.width) + 0.5 - g.y) <= g.radius);
+      [reactorGlow, ...glows].some((g) => Math.hypot((index % map.width) + 0.5 - g.x, Math.floor(index / map.width) + 0.5 - g.y) <= g.radius);
     if (lit) onSeen(index);
   });
   const vision = visibilityPolygon(map, eye.x, eye.y, range, LIGHT.visionRays, seen);
 
-  return { map, eye, vision, litRooms, hallLights, glows, ownFlashlight, flashlights };
+  return { map, eye, vision, litRooms, hallLights, reactorGlow, glows, ownFlashlight, flashlights };
 }
 
 // Erases the lit, visible parts of a darkness layer. `ctx` uses the world
@@ -107,6 +104,8 @@ export function paintLight(ctx, scene) {
   ctx.fillStyle = '#000';
   for (const room of scene.litRooms) ctx.fillRect(room.x - 1, room.y - 1, room.w + 2, room.h + 2);
   if (scene.hallLights) ctx.fill(hallPath(scene.map));
+  const { reactorGlow: r } = scene;
+  fillGlow(ctx, r.x, r.y, r.radius * 0.4, r.radius);
 
   // Everything else only where we have line of sight.
   ctx.save();
@@ -138,12 +137,13 @@ export function paintLight(ctx, scene) {
   ctx.restore();
 }
 
-// Whether we can see the point: it's in a lit room or lit hallway, or it's
-// lit some other way and in our line of sight.
+// Whether we can see the point: it's in a lit room, a lit hallway or the
+// reactor's glow, or it's lit some other way and in our line of sight.
 export function canSee(scene, x, y) {
-  const { map } = scene;
+  const { map, reactorGlow } = scene;
   const room = roomLookup(map)[Math.floor(y) * map.width + Math.floor(x)];
   if (room >= 0 ? scene.litRooms.some((r) => r.id === room) : scene.hallLights) return true;
+  if (Math.hypot(x - reactorGlow.x, y - reactorGlow.y) <= reactorGlow.radius * DIM) return true;
   return isLit(scene, x, y) && lineOfSight(scene.map, scene.eye.x, scene.eye.y, x, y);
 }
 

@@ -114,8 +114,9 @@ export function createRenderer(canvas) {
     // `alpha` blends our own position between movement steps; `now` places
     // other players and enemies on their interpolation timeline. `aim` is
     // where we point our flashlight. `showMinimap` shows our explored map;
-    // `fullMap` instead shows the whole level, for testing.
-    draw(game, roster, alpha, now, { aim = 0, showMinimap = true, fullMap = false } = {}) {
+    // `fullMap` instead shows the whole level, for testing. `showDial` shows
+    // the temperature dial on the reactor.
+    draw(game, roster, alpha, now, { aim = 0, showMinimap = true, fullMap = false, showDial = true } = {}) {
       const { map } = game;
       const self = { id: game.you, ...game.selfAt(alpha), hp: game.hp, down: game.down };
       const players = [...game.othersAt(now), self].map((p) => ({
@@ -156,7 +157,7 @@ export function createRenderer(canvas) {
       ctx.setTransform(...world);
       drawMap(ctx, layers);
       drawExit(ctx, map.exit, now);
-      drawReactor(ctx, map.reactor, game.reactor.temperature, now);
+      drawReactor(ctx, map.reactor, now);
       const target = game.interactTarget(); // what E would do
       drawDoors(ctx, map.doors, target?.kind === 'door' ? target.door : null);
       for (const item of game.pickups) drawPickup(ctx, item);
@@ -189,7 +190,7 @@ export function createRenderer(canvas) {
       const reactorInSight = sides.some(([x, y]) => canSee(scene, x, y));
       if (reactorInSight) {
         ctx.setTransform(...world);
-        drawReactor(ctx, reactor, game.reactor.temperature, now, { glow: false });
+        drawReactor(ctx, reactor, now, { glow: false });
       }
 
       // Overlay pass, in CSS pixels. Health bars only show for what we can
@@ -206,7 +207,7 @@ export function createRenderer(canvas) {
         drawTag(ctx, pos.x, pos.y - 5, player, seen);
       }
       // The dial sits on the reactor's face, so it never covers players standing around it.
-      if (reactorInSight) {
+      if (reactorInSight && showDial) {
         const dialAt = toScreen(reactor.x + reactor.w / 2, reactor.y + reactor.h / 2);
         drawDial(ctx, dialAt.x, dialAt.y + DIAL_RADIUS * 0.5, DIAL_RADIUS, game.reactor.temperature);
       }
@@ -380,23 +381,20 @@ function drawEnemy(ctx, { x, y }) {
   ctx.stroke();
 }
 
-// The reactor: a blue block with a pulsing glow that grows brighter as it
-// heats up. With `glow` false, just the block.
-function drawReactor(ctx, rect, temperature, now, { glow = true } = {}) {
-  const heat = Math.min(1, temperature / 100);
+// The reactor: a blue block with a softly pulsing glow, the same whatever
+// its temperature. With `glow` false, just the block.
+function drawReactor(ctx, rect, now, { glow = true } = {}) {
   const pulse = 0.5 + 0.5 * Math.sin(now / 400);
   for (let i = 5; glow && i >= 1; i--) {
     const pad = i * 0.15;
-    ctx.fillStyle = `rgba(${COLORS.reactorGlow}, ${(0.03 + 0.06 * heat) * (0.6 + 0.4 * pulse)})`;
+    ctx.fillStyle = `rgba(${COLORS.reactorGlow}, ${0.09 * (0.6 + 0.4 * pulse)})`;
     ctx.fillRect(rect.x - pad, rect.y - pad, rect.w + pad * 2, rect.h + pad * 2);
   }
   ctx.fillStyle = COLORS.reactor;
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   const inset = 0.6;
-  ctx.globalAlpha = 0.35 + 0.65 * heat;
   ctx.fillStyle = COLORS.reactorCore;
   ctx.fillRect(rect.x + inset, rect.y + inset, rect.w - inset * 2, rect.h - inset * 2);
-  ctx.globalAlpha = 1;
   ctx.strokeStyle = COLORS.reactorEdge;
   ctx.lineWidth = 3 / TILE_PX;
   ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);

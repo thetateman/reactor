@@ -223,7 +223,7 @@ function frame(now) {
 
   if (game) {
     updateAim();
-    renderer.draw(game, roster, acc / SIM_STEP, now, { aim, showMinimap, fullMap });
+    renderer.draw(game, roster, acc / SIM_STEP, now, { aim, showMinimap, fullMap, showDial: game.reactor.used });
     ui.renderAmmo(game.ammoLeft);
     ui.renderPower(isPowered(game.reactor.temperature));
     ui.renderFlashlight(game.battery, game.flashlightOn);

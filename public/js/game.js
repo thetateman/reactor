@@ -34,7 +34,7 @@ export class ClientGame {
     this.you = you;
     this.map = deserializeMap(map);
     this.pickups = pickups; // [{ id, kind, x, y }]
-    this.reactor = reactor; // { temperature, rodIn }, as of the last server update
+    this.reactor = reactor; // { temperature, rodIn, used }, as of the last server update
     this.lights = lights; // lights[roomId]: whether that room is lit
     this.hallLights = hallLights; // whether the hallways are lit
     this.self = { x: 0, y: 0 };
